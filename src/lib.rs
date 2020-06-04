@@ -13,6 +13,80 @@ use std::fs;
 use scanner_rust::generic_array::typenum::U384;
 use scanner_rust::{ScannerAscii, ScannerError};
 
+#[cfg(debug_assertions)]
+macro_rules! remove_file {
+    ($path:expr) => {
+        println!("Remove file: {}", $path.to_string_lossy());
+    };
+    ($path:expr, $not_found:block) => {
+        println!("Remove file: {}", $path.to_string_lossy());
+    };
+}
+
+#[cfg(not(debug_assertions))]
+macro_rules! remove_file {
+    ($path:expr) => {
+        fs::remove_file($path)?
+    };
+    ($path:expr, $not_found:block) => {
+        match fs::remove_file($path) {
+            Ok(_) => (),
+            Err(ref err) if err.kind() == ErrorKind::NotFound => $not_found,
+            Err(err) => return Err(err.into()),
+        }
+    };
+}
+
+#[cfg(debug_assertions)]
+macro_rules! remove_dir_all {
+    ($path:expr) => {
+        println!("Remove dir all: {}", $path.to_string_lossy());
+    };
+    ($path:expr, $not_found:block) => {
+        println!("Remove dir all: {}", $path.to_string_lossy());
+    };
+}
+
+#[cfg(not(debug_assertions))]
+macro_rules! remove_dir_all {
+    ($path:expr) => {
+        fs::remove_dir_all($path)?
+    };
+    ($path:expr, $not_found:block) => {
+        match fs::remove_dir_all($path) {
+            Ok(_) => (),
+            Err(ref err) if err.kind() == ErrorKind::NotFound => $not_found,
+            Err(err) => return Err(err.into()),
+        }
+    };
+}
+
+#[cfg(debug_assertions)]
+macro_rules! remove_dir {
+    ($path:expr) => {
+        println!("Remove dir: {}", $path.to_string_lossy());
+    };
+    ($path:expr, $not_found_other:block) => {
+        println!("Remove dir: {}", $path.to_string_lossy());
+    };
+}
+
+#[cfg(not(debug_assertions))]
+macro_rules! remove_dir {
+    ($path:expr) => {
+        fs::remove_dir($path)?
+    };
+    ($path:expr, $not_found_other:block) => {
+        match fs::remove_dir($path) {
+            Ok(_) => (),
+            Err(ref err) if err.kind() == ErrorKind::NotFound || err.kind() == ErrorKind::Other => {
+                $not_found_other
+            }
+            Err(err) => return Err(err.into()),
+        }
+    };
+}
+
 /// Do something like `rm -rf /path/to/*`. The `/path/to` directory will not be deleted. This function may be dangerous.
 pub fn remove_all_files_in_directory<P: AsRef<Path>>(directory: P) -> Result<(), io::Error> {
     let directory = directory.as_ref();
@@ -29,25 +103,9 @@ pub fn remove_all_files_in_directory<P: AsRef<Path>>(directory: P) -> Result<(),
         let path = dir_entry.path();
 
         if file_type.is_dir() {
-            #[cfg(debug_assertions)]
-            println!("Remove dir all: {}", path.to_string_lossy());
-
-            #[cfg(not(debug_assertions))]
-            match fs::remove_dir_all(path) {
-                Ok(_) => (),
-                Err(ref err) if err.kind() == ErrorKind::NotFound => continue,
-                Err(err) => return Err(err),
-            }
+            remove_dir_all!(path, { continue });
         } else {
-            #[cfg(debug_assertions)]
-            println!("Remove file: {}", path.to_string_lossy());
-
-            #[cfg(not(debug_assertions))]
-            match fs::remove_file(path) {
-                Ok(_) => (),
-                Err(ref err) if err.kind() == ErrorKind::NotFound => continue,
-                Err(err) => return Err(err),
-            }
+            remove_file!(path, { continue });
         }
     }
 
@@ -61,8 +119,9 @@ pub fn remove_one_cache<P: AsRef<Path>, L: AsRef<str>, K: AsRef<str>>(
     key: K,
 ) -> Result<(), io::Error> {
     let levels = parse_levels_stage_1(&levels)?;
+    let number_of_levels = levels.len();
 
-    let mut levels_usize = Vec::with_capacity(levels.len());
+    let mut levels_usize = Vec::with_capacity(number_of_levels);
 
     for level in levels {
         let level_usize = level.parse::<usize>().map_err(|_| {
@@ -93,11 +152,16 @@ pub fn remove_one_cache<P: AsRef<Path>, L: AsRef<str>, K: AsRef<str>>(
 
     file_path.push(hashed_key);
 
-    #[cfg(debug_assertions)]
-    println!("Remove file: {}", file_path.to_string_lossy());
+    let file_path = file_path.as_path();
 
-    #[cfg(not(debug_assertions))]
-    fs::remove_file(file_path)?;
+    remove_file!(file_path);
+
+    let mut path = file_path.parent().unwrap();
+
+    for _ in 0..number_of_levels {
+        remove_dir!(path, { return Ok(()) });
+        path = path.parent().unwrap();
+    }
 
     Ok(())
 }
@@ -151,8 +215,12 @@ pub fn remove_caches_via_wildcard<P: AsRef<Path>, L: AsRef<str>, K: AsRef<str>>(
 
                         if number_of_levels == 1 {
                             if file_type.is_file() {
-                                match_key_and_remove_one_cache(dir_entry.path(), key)
-                                    .map_err(|_| io::Error::from(ErrorKind::InvalidData))?;
+                                match_key_and_remove_one_cache(
+                                    dir_entry.path(),
+                                    key,
+                                    number_of_levels,
+                                )
+                                .map_err(|_| io::Error::from(ErrorKind::InvalidData))?;
                             }
                         } else if file_type.is_dir() {
                             for dir_entry in dir_entry.path().read_dir()? {
@@ -167,8 +235,12 @@ pub fn remove_caches_via_wildcard<P: AsRef<Path>, L: AsRef<str>, K: AsRef<str>>(
 
                                 if number_of_levels == 2 {
                                     if file_type.is_file() {
-                                        match_key_and_remove_one_cache(dir_entry.path(), key)
-                                            .map_err(|_| io::Error::from(ErrorKind::InvalidData))?;
+                                        match_key_and_remove_one_cache(
+                                            dir_entry.path(),
+                                            key,
+                                            number_of_levels,
+                                        )
+                                        .map_err(|_| io::Error::from(ErrorKind::InvalidData))?;
                                     }
                                 } else if file_type.is_dir() {
                                     for dir_entry in dir_entry.path().read_dir()? {
@@ -184,7 +256,12 @@ pub fn remove_caches_via_wildcard<P: AsRef<Path>, L: AsRef<str>, K: AsRef<str>>(
                                         };
 
                                         if file_type.is_file() {
-                                            match_key_and_remove_one_cache(dir_entry.path(), key).map_err(|_| io::Error::from(ErrorKind::InvalidData))?;
+                                            match_key_and_remove_one_cache(
+                                                dir_entry.path(),
+                                                key,
+                                                number_of_levels,
+                                            )
+                                            .map_err(|_| io::Error::from(ErrorKind::InvalidData))?;
                                         }
                                     }
                                 }
@@ -202,6 +279,7 @@ pub fn remove_caches_via_wildcard<P: AsRef<Path>, L: AsRef<str>, K: AsRef<str>>(
 fn match_key_and_remove_one_cache<P: AsRef<Path>, K: AsRef<str>>(
     file_path: P,
     key: K,
+    number_of_levels: usize,
 ) -> Result<(), ScannerError> {
     let file_path = file_path.as_ref();
     let key = key.as_ref();
@@ -217,14 +295,13 @@ fn match_key_and_remove_one_cache<P: AsRef<Path>, K: AsRef<str>>(
     let read_key = sc.next_line_raw()?.ok_or(ErrorKind::InvalidData)?;
 
     if read_key.starts_with(key.as_bytes()) {
-        #[cfg(debug_assertions)]
-        println!("Remove file: {}", file_path.to_string_lossy());
+        remove_file!(file_path, { return Ok(()) });
 
-        #[cfg(not(debug_assertions))]
-        match fs::remove_file(file_path) {
-            Ok(_) => (),
-            Err(ref err) if err.kind() == ErrorKind::NotFound => (),
-            Err(err) => return Err(err.into()),
+        let mut path = file_path.parent().unwrap();
+
+        for _ in 0..number_of_levels {
+            remove_dir!(path, { return Ok(()) });
+            path = path.parent().unwrap();
         }
     }
 
