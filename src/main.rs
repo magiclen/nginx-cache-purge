@@ -24,7 +24,7 @@ fn main() {
         .set_term_width( terminal_size().map(|(width, _)| width.0 as usize).unwrap_or(0))
         .version(CARGO_PKG_VERSION)
         .author(CARGO_PKG_AUTHORS)
-        .about(concat!("An alternative way to do proxy_cache_purge or fastcgi_cache_purge for Nginx.\n\nEXAMPLES:\n", concat_line!(prefix "nginx_cache_purge ",
+        .about(concat!("An alternative way to do proxy_cache_purge or fastcgi_cache_purge for Nginx.\n\nEXAMPLES:\n", concat_line!(prefix "nginx-cache-purge ",
                 "/path/to/cache 1:2 http/blog/     # Purges the cache with \"KEY: http/blog/\" in the \"cache zone\" whose \"path\" is /path/to/cache, \"levels\" is 1:2",
             )))
         .arg(Arg::with_name("CACHE_PATH")
