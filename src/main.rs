@@ -19,7 +19,7 @@ const APP_NAME: &str = "Nginx Cache Purge";
 const CARGO_PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
 const CARGO_PKG_AUTHORS: &str = env!("CARGO_PKG_AUTHORS");
 
-fn main() {
+fn main() -> Result<(), String> {
     let matches = App::new(APP_NAME)
         .set_term_width( terminal_size().map(|(width, _)| width.0 as usize).unwrap_or(0))
         .version(CARGO_PKG_VERSION)
@@ -47,8 +47,10 @@ fn main() {
     let key = matches.value_of("KEY").unwrap();
 
     if key.ends_with('*') {
-        remove_caches_via_wildcard(cache_path, levels, key).unwrap();
+        remove_caches_via_wildcard(cache_path, levels, key).map_err(|err| err.to_string())?;
     } else {
-        remove_one_cache(cache_path, levels, key).unwrap();
+        remove_one_cache(cache_path, levels, key).map_err(|err| err.to_string())?;
     }
+
+    Ok(())
 }
