@@ -25,7 +25,9 @@ fn main() -> Result<(), String> {
         .version(CARGO_PKG_VERSION)
         .author(CARGO_PKG_AUTHORS)
         .about(concat!("An alternative way to do proxy_cache_purge or fastcgi_cache_purge for Nginx.\n\nEXAMPLES:\n", concat_line!(prefix "nginx-cache-purge ",
-                "/path/to/cache 1:2 http/blog/     # Purges the cache with \"KEY: http/blog/\" in the \"cache zone\" whose \"path\" is /path/to/cache, \"levels\" is 1:2",
+                "/path/to/cache 1:2 http/blog/       # Purges the cache with the key \"http/blog/\" in the \"cache zone\" whose \"path\" is /path/to/cache, \"levels\" is 1:2",
+                "/path/to/cache 1:1:1 http/blog*     # Purges the caches with the key which has \"http/blog\" as its prefix in the \"cache zone\" whose \"path\" is /path/to/cache, \"levels\" is 1:1:1",
+                "/path/to/cache 2 *                  # Purges all caches in the \"cache zone\" whose \"path\" is /path/to/cache, \"levels\" is 1:1:1",
             )))
         .arg(Arg::with_name("CACHE_PATH")
             .required(true)
@@ -47,7 +49,11 @@ fn main() -> Result<(), String> {
     let key = matches.value_of("KEY").unwrap();
 
     if key.ends_with('*') {
-        remove_caches_via_wildcard(cache_path, levels, key).map_err(|err| err.to_string())?;
+        if key.len() == 1 {
+            remove_all_files_in_directory(cache_path).map_err(|err| err.to_string())?;
+        } else {
+            remove_caches_via_wildcard(cache_path, levels, key).map_err(|err| err.to_string())?;
+        }
     } else {
         remove_one_cache(cache_path, levels, key).map_err(|err| err.to_string())?;
     }
