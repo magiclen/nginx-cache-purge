@@ -9,6 +9,7 @@ extern crate hex;
 extern crate md5;
 
 use std::env;
+use std::error::Error;
 
 use clap::{App, Arg};
 use terminal_size::terminal_size;
@@ -19,7 +20,7 @@ const APP_NAME: &str = "Nginx Cache Purge";
 const CARGO_PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
 const CARGO_PKG_AUTHORS: &str = env!("CARGO_PKG_AUTHORS");
 
-fn main() -> Result<(), String> {
+fn main() -> Result<(), Box<dyn Error>> {
     let matches = App::new(APP_NAME)
         .set_term_width( terminal_size().map(|(width, _)| width.0 as usize).unwrap_or(0))
         .version(CARGO_PKG_VERSION)
@@ -50,12 +51,12 @@ fn main() -> Result<(), String> {
 
     if key.ends_with('*') {
         if key.len() == 1 {
-            remove_all_files_in_directory(cache_path).map_err(|err| err.to_string())?;
+            remove_all_files_in_directory(cache_path)?;
         } else {
-            remove_caches_via_wildcard(cache_path, levels, key).map_err(|err| err.to_string())?;
+            remove_caches_via_wildcard(cache_path, levels, key)?;
         }
     } else {
-        remove_one_cache(cache_path, levels, key).map_err(|err| err.to_string())?;
+        remove_one_cache(cache_path, levels, key)?;
     }
 
     Ok(())
