@@ -10,6 +10,7 @@ categories = ["command-line-utilities"]
 description= "An alternative way to do `proxy_cache_purge` or `fastcgi_cache_purge` for Nginx."
 readme = "README.md"
 license = "MIT"
+include = ["src/**/*", "Cargo.toml"]
 
 [badges.travis-ci]
 repository = "magiclen/nginx-cache-purge"
