@@ -5,7 +5,6 @@ extern crate terminal_size;
 
 extern crate nginx_cache_purge;
 
-extern crate hex;
 extern crate md5;
 
 use std::env;

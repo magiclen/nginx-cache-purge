@@ -138,11 +138,12 @@ pub fn remove_one_cache<P: AsRef<Path>, L: AsRef<str>, K: AsRef<str>>(
         levels_usize.push(level_usize);
     }
 
-    let key_md5 = md5::compute(key.as_ref());
-    let hashed_key = hex::encode(key_md5.as_ref());
+    let key_md5_digest = md5::compute(key.as_ref());
+    let key_md5_value = u128::from_be_bytes(key_md5_digest.0);
+    let hashed_key = format!("{:032x}", key_md5_value);
 
     let mut file_path = cache_path.as_ref().to_path_buf();
-    let mut p = hashed_key.len();
+    let mut p = 32; // md5's hex string length
 
     for level_usize in levels_usize {
         file_path.push(&hashed_key[(p - level_usize)..p]);
