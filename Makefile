@@ -7,7 +7,7 @@ all: ./target/x86_64-unknown-linux-musl/release/nginx-cache-purge
 install:
 	$(MAKE)
 	sudo cp ./target/x86_64-unknown-linux-musl/release/nginx-cache-purge /usr/local/bin/nginx-cache-purge
-	sudo chown root. /usr/local/bin/nginx-cache-purge
+	sudo chown root: /usr/local/bin/nginx-cache-purge
 	sudo chmod 0755 /usr/local/bin/nginx-cache-purge
 
 uninstall:
