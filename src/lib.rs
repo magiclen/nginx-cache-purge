@@ -128,7 +128,7 @@ pub fn remove_one_cache<P: AsRef<Path>, L: AsRef<str>, K: AsRef<str>>(
             io::Error::new(ErrorKind::InvalidInput, "The value of levels should be an integer.")
         })?;
 
-        if level_usize < 1 || level_usize > 2 {
+        if !(1..=2).contains(&level_usize) {
             return Err(io::Error::new(
                 ErrorKind::InvalidInput,
                 "The value of levels should be 1 or 2.",
