@@ -1,7 +1,7 @@
 Nginx Cache Purge
 ====================
 
-[![Build Status](https://travis-ci.org/magiclen/nginx-cache-purge.svg?branch=master)](https://travis-ci.org/magiclen/nginx-cache-purge)
+[![CI](https://github.com/magiclen/nginx-cache-purge/actions/workflows/ci.yml/badge.svg)](https://github.com/magiclen/nginx-cache-purge/actions/workflows/ci.yml)
 
 An alternative way to do `proxy_cache_purge` or `fastcgi_cache_purge` for Nginx.
 

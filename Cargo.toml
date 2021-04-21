@@ -1,6 +1,6 @@
 [package]
 name = "nginx-cache-purge"
-version = "0.1.7"
+version = "0.1.8"
 authors = ["Magic Len <len@magiclen.org>"]
 edition = "2018"
 repository = "https://github.com/magiclen/nginx-cache-purge"
@@ -11,10 +11,6 @@ description = "An alternative way to do `proxy_cache_purge` or `fastcgi_cache_pu
 readme = "README.md"
 license = "MIT"
 include = ["src/**/*", "Cargo.toml", "README.md", "LICENSE"]
-
-[badges.travis-ci]
-repository = "magiclen/nginx-cache-purge"
-branch = "master"
 
 [profile.release]
 lto = true
