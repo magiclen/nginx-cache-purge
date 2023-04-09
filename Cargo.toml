@@ -17,6 +17,7 @@ include = ["src/**/*", "Cargo.toml", "README.md", "LICENSE"]
 lto = true
 codegen-units = 1
 panic = "abort"
+strip = true
 
 [dependencies]
 clap = "3.2.23"
