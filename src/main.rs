@@ -1,12 +1,9 @@
-use std::env;
-use std::error::Error;
+use std::{env, error::Error};
 
 use clap::{Arg, Command};
-use terminal_size::terminal_size;
-
 use concat_with::concat_line;
-
 use nginx_cache_purge::*;
+use terminal_size::terminal_size;
 
 const APP_NAME: &str = "Nginx Cache Purge";
 const CARGO_PKG_VERSION: &str = env!("CARGO_PKG_VERSION");

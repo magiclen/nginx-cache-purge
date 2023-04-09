@@ -4,14 +4,14 @@
 extern crate md5;
 extern crate scanner_rust;
 
-use std::io::{self, ErrorKind};
-use std::path::Path;
-
 #[cfg(not(debug_assertions))]
 use std::fs;
+use std::{
+    io::{self, ErrorKind},
+    path::Path,
+};
 
-use scanner_rust::generic_array::typenum::U384;
-use scanner_rust::{ScannerAscii, ScannerError};
+use scanner_rust::{generic_array::typenum::U384, ScannerAscii, ScannerError};
 
 #[cfg(debug_assertions)]
 macro_rules! remove_file {
@@ -81,7 +81,7 @@ macro_rules! remove_dir {
             Ok(_) => (),
             Err(ref err) if err.kind() == ErrorKind::NotFound || err.kind() == ErrorKind::Other => {
                 $not_found_other
-            }
+            },
             Err(err) => return Err(err.into()),
         }
     };
@@ -252,7 +252,7 @@ pub fn remove_caches_via_wildcard<P: AsRef<Path>, L: AsRef<str>, K: AsRef<str>>(
                                             Ok(file_type) => file_type,
                                             Err(ref err) if err.kind() == ErrorKind::NotFound => {
                                                 continue;
-                                            }
+                                            },
                                             Err(err) => return Err(err),
                                         };
 

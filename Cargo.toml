@@ -3,6 +3,7 @@ name = "nginx-cache-purge"
 version = "0.1.10"
 authors = ["Magic Len <len@magiclen.org>"]
 edition = "2021"
+rust-version = "1.59"
 repository = "https://github.com/magiclen/nginx-cache-purge"
 homepage = "https://magiclen.org/nginx-cache-purge"
 keywords = ["nginx", "cache", "clear", "purge", "delete"]
