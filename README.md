@@ -49,8 +49,11 @@ http {
                 set $my_cache_key $scheme$proxy_host$request_uri;
 
                 content_by_lua_block {
-                    local exitStatus = os.execute("/usr/local/bin/nginx-cache-purge /path/to/cache 1:2 "..ngx.var.my_cache_key)
-                     
+                    local ngx_pipe = require "ngx.pipe"
+                    local exitStatus, err = ngx_pipe.spawn({"/usr/local/bin/nginx-cache-purge", "/path/to/cache", "1:2", ngx.var.my_cache_key})
+                    if err then
+                        ngx.log("purge error: ", err)
+                    end
                     if exitStatus == 0 then
                         ngx.exit(ngx.HTTP_OK)
                     else
