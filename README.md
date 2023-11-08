@@ -53,6 +53,8 @@ http {
                      
                     if exitStatus == 0 then
                         ngx.exit(ngx.HTTP_OK)
+                    elseif exitStatus == 44 then
+                        ngx.exit(ngx.HTTP_NO_CONTENT)
                     else
                         ngx.exit(ngx.HTTP_BAD_REQUEST)
                     end

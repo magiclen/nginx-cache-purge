@@ -1,9 +1,9 @@
 [package]
 name = "nginx-cache-purge"
-version = "0.1.10"
+version = "0.1.11"
 authors = ["Magic Len <len@magiclen.org>"]
 edition = "2021"
-rust-version = "1.59"
+rust-version = "1.70"
 repository = "https://github.com/magiclen/nginx-cache-purge"
 homepage = "https://magiclen.org/nginx-cache-purge"
 keywords = ["nginx", "cache", "clear", "purge", "delete"]
@@ -19,9 +19,11 @@ panic = "abort"
 strip = true
 
 [dependencies]
-clap = "3.2.23"
+clap = { version = "4", features = ["derive"] }
 concat-with = "0.2"
-terminal_size = "0.2"
+terminal_size = "0.3"
 
-md5 = "0.7"
-scanner-rust = "2.0.8"
+anyhow = "1"
+
+md-5 = "0.10"
+scanner-rust = "2"
