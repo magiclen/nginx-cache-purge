@@ -85,6 +85,8 @@ sudo systemctl enable nginx-cache-purge
 
 #### Edit Nginx' Configuration File
 
+Assume we want to put the cache in `/tmp/cache`.
+
 ```nginx
 http {
     ...
@@ -94,16 +96,16 @@ http {
         PURGE     1;
     }
 
-    proxy_cache_path /path/to/cache levels=1:2 keys_zone=my_cache:10m;
+    proxy_cache_path /tmp/cache levels=1:2 keys_zone=my_cache:10m;
     proxy_cache_key $scheme$proxy_host$request_uri;
 
     server {
         ...
 
         location / {
+            set $my_cache_key $scheme$proxy_host$request_uri;
+            
             if ($is_purge) {
-                set $my_cache_key $scheme$proxy_host$request_uri;
-
                 proxy_pass http://unix:/tmp/nginx-cache-purge.sock;
                 
                 rewrite ^ /?cache_path=/tmp/cache&levels=1:2&key=$my_cache_key break;
