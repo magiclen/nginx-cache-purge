@@ -1,14 +1,21 @@
 mod cli;
 mod functions;
+#[cfg(feature = "service")]
+mod server;
 
-use std::process::{ExitCode, Termination};
+use std::{
+    path::{Path, PathBuf},
+    process::{ExitCode, Termination},
+};
 
 use cli::*;
+#[cfg(feature = "service")]
+use server::*;
 
 #[derive(Debug)]
 pub enum AppResult {
-    Ok            = 0,
-    AlreadyPurged = 44,
+    Ok,
+    AlreadyPurged(PathBuf),
 }
 
 impl From<()> for AppResult {
@@ -21,21 +28,52 @@ impl From<()> for AppResult {
 impl Termination for AppResult {
     #[inline]
     fn report(self) -> ExitCode {
-        ExitCode::from(self as u8)
+        let exit_code = match self {
+            AppResult::Ok => 0u8,
+            AppResult::AlreadyPurged(file_path) => {
+                eprintln!("Hint: {file_path:?} does not exist");
+
+                44
+            },
+        };
+
+        ExitCode::from(exit_code)
+    }
+}
+
+#[inline]
+fn purge<P: AsRef<Path>, L: AsRef<str>, K: AsRef<str>>(
+    cache_path: P,
+    levels: L,
+    key: K,
+) -> anyhow::Result<AppResult> {
+    let cache_path = cache_path.as_ref();
+    let levels = levels.as_ref();
+    let key = key.as_ref();
+
+    if key.ends_with('*') {
+        if key.len() == 1 {
+            functions::remove_all_files_in_directory(cache_path).map(|ok| ok.into())
+        } else {
+            functions::remove_caches_via_wildcard(cache_path, levels, key).map(|ok| ok.into())
+        }
+    } else {
+        functions::remove_one_cache(cache_path, levels, key)
     }
 }
 
 fn main() -> anyhow::Result<AppResult> {
     let args = get_args();
 
-    if args.key.ends_with('*') {
-        if args.key.len() == 1 {
-            functions::remove_all_files_in_directory(args.cache_path).map(|ok| ok.into())
-        } else {
-            functions::remove_caches_via_wildcard(args.cache_path, args.levels, args.key)
-                .map(|ok| ok.into())
-        }
-    } else {
-        functions::remove_one_cache(args.cache_path, args.levels, args.key)
+    match &args.command {
+        CLICommands::Purge {
+            cache_path,
+            levels,
+            key,
+        } => purge(cache_path, levels, key),
+        #[cfg(feature = "service")]
+        CLICommands::Start {
+            socket_file_path,
+        } => server_main(socket_file_path.as_path()),
     }
 }

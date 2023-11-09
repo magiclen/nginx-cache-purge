@@ -165,9 +165,7 @@ pub fn remove_one_cache<P: AsRef<Path>, L: AsRef<str>, K: AsRef<str>>(
             Ok(AppResult::Ok)
         },
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            eprintln!("Hint: {file_path:?} does not exist");
-
-            Ok(AppResult::AlreadyPurged)
+            Ok(AppResult::AlreadyPurged(file_path))
         },
         Err(error) => Err(error).with_context(|| anyhow!("{file_path:?}")),
     }

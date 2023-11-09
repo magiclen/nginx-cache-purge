@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use clap::{CommandFactory, FromArgMatches, Parser};
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use concat_with::concat_line;
 use terminal_size::terminal_size;
 
@@ -13,9 +13,11 @@ const AFTER_HELP: &str = "Enjoy it! https://magiclen.org";
 const APP_ABOUT: &str = concat!(
     "An alternative way to do proxy_cache_purge or fastcgi_cache_purge for Nginx.\n\nEXAMPLES:\n",
     concat_line!(prefix "nginx-cache-purge ",
-        "/path/to/cache 1:2 http/blog/       # Purge the cache with the key \"http/blog/\" in the \"cache zone\" whose \"path\" is /path/to/cache, \"levels\" is 1:2",
-        "/path/to/cache 1:1:1 http/blog*     # Purge the caches with the key which has \"http/blog\" as its prefix in the \"cache zone\" whose \"path\" is /path/to/cache, \"levels\" is 1:1:1",
-        "/path/to/cache 2 *                  # Purge all caches in the \"cache zone\" whose \"path\" is /path/to/cache, \"levels\" is 1:1:1",
+        "purge /path/to/cache 1:2 http/blog/      # Purge the cache with the key \"http/blog/\" in the \"cache zone\" whose \"path\" is /path/to/cache, \"levels\" is 1:2",
+        "purge /path/to/cache 1:1:1 http/blog*    # Purge the caches with the key which has \"http/blog\" as its prefix in the \"cache zone\" whose \"path\" is /path/to/cache, \"levels\" is 1:1:1",
+        "purge /path/to/cache 2 *                 # Purge all caches in the \"cache zone\" whose \"path\" is /path/to/cache, \"levels\" is 1:1:1",
+        "start                                    # Start a server which listens on \"/tmp/nginx-cache-purge.sock\" to handle purge requests",
+        "start /run/nginx-cache-purge.sock        # Start a server which listens on \"/run/nginx-cache-purge.sock\" to handle purge requests",
     )
 );
 
@@ -26,14 +28,33 @@ const APP_ABOUT: &str = concat!(
 #[command(author = CARGO_PKG_AUTHORS)]
 #[command(after_help = AFTER_HELP)]
 pub struct CLIArgs {
-    #[arg(help = "Assign the path set by proxy_cache_path or fastcgi_cache_path")]
-    pub cache_path: PathBuf,
+    #[command(subcommand)]
+    pub command: CLICommands,
+}
 
-    #[arg(help = "Assign the levels set by proxy_cache_path or fastcgi_cache_path")]
-    pub levels: String,
+#[derive(Debug, Subcommand)]
+pub enum CLICommands {
+    #[command(about = "Purge the cache immediately")]
+    #[command(after_help = AFTER_HELP)]
+    Purge {
+        #[arg(value_hint = clap::ValueHint::DirPath)]
+        #[arg(help = "Assign the path set by proxy_cache_path or fastcgi_cache_path")]
+        cache_path: PathBuf,
 
-    #[arg(help = "Assign the key set by proxy_cache_key or fastcgi_cache_key")]
-    pub key: String,
+        #[arg(help = "Assign the levels set by proxy_cache_path or fastcgi_cache_path")]
+        levels: String,
+
+        #[arg(help = "Assign the key set by proxy_cache_key or fastcgi_cache_key")]
+        key: String,
+    },
+    #[cfg(feature = "service")]
+    #[command(about = "Start a server to handle purge requests")]
+    #[command(after_help = AFTER_HELP)]
+    Start {
+        #[arg(default_value = "/tmp/nginx-cache-purge.sock")]
+        #[arg(value_hint = clap::ValueHint::FilePath)]
+        socket_file_path: PathBuf,
+    },
 }
 
 pub fn get_args() -> CLIArgs {

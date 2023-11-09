@@ -23,6 +23,7 @@ jobs:
           - x86_64-unknown-linux-musl
         features:
           -
+          - --no-default-features
     name: Test ${{ matrix.toolchain }} on ${{ matrix.os }} to ${{ matrix.target }} (${{ matrix.features }})
     runs-on: ${{ matrix.os }}
     steps:
@@ -47,6 +48,7 @@ jobs:
           - x86_64-unknown-linux-musl
         features:
           -
+          - --no-default-features
     name: Test ${{ matrix.toolchain }} on ${{ matrix.os }} to ${{ matrix.target }} (${{ matrix.features }})
     runs-on: ${{ matrix.os }}
     steps:

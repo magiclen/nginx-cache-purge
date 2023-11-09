@@ -25,9 +25,65 @@ From GitHub (Linux x86_64),
 # sudo rm /usr/local/bin/nginx-cache-purge
 ```
 
-### Nginx + lua-nginx-module + Nginx Cache Purge
+### CLI Help
+
+```
+EXAMPLES:
+nginx-cache-purge purge /path/to/cache 1:2 http/blog/      # Purge the cache with the key "http/blog/" in the "cache zone" whose "path" is /path/to/cache, "levels" is 1:2
+nginx-cache-purge purge /path/to/cache 1:1:1 http/blog*    # Purge the caches with the key which has "http/blog" as its prefix in the "cache zone" whose "path" is /path/to/cache, "levels" is 1:1:1
+nginx-cache-purge purge /path/to/cache 2 *                 # Purge all caches in the "cache zone" whose "path" is /path/to/cache, "levels" is 1:1:1
+nginx-cache-purge start                                    # Start a server which listens on "/tmp/nginx-cache-purge.sock" to handle purge requests
+nginx-cache-purge start /run/nginx-cache-purge.sock        # Start a server which listens on "/run/nginx-cache-purge.sock" to handle purge requests
+
+Usage: nginx-cache-purge <COMMAND>
+
+Commands:
+  purge  Purge the cache immediately
+  start  Start a server to handle purge requests
+  help   Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+```
+
+### Nginx + Nginx Cache Purge
+
+#### Start the Service of Nginx Cache Purge (systemd for example)
 
 Assume we have already put the executable file `nginx-cache-purge` in `/usr/local/bin/`.
+
+**/etc/systemd/system/nginx-cache-purge.service**
+
+```
+[Unit]
+Description=Nginx Cache Purge
+After=network.target
+ 
+[Service]
+# same as the user/group of the nginx process
+User=www-data
+Group=www-data
+
+ExecStart=/usr/local/bin/nginx-cache-purge start
+Restart=always
+RestartSec=3s
+ 
+[Install]
+WantedBy=multi-user.target
+```
+
+Run the following commands,
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl start nginx-cache-purge
+sudo systemctl status nginx-cache-purge
+
+sudo systemctl enable nginx-cache-purge
+```
+
+#### Edit Nginx' Configuration File
 
 ```nginx
 http {
@@ -48,17 +104,9 @@ http {
             if ($is_purge) {
                 set $my_cache_key $scheme$proxy_host$request_uri;
 
-                content_by_lua_block {
-                    local exitStatus = os.execute("/usr/local/bin/nginx-cache-purge /path/to/cache 1:2 "..ngx.var.my_cache_key)
-                     
-                    if exitStatus == 0 then
-                        ngx.exit(ngx.HTTP_OK)
-                    elseif exitStatus == 44 then
-                        ngx.exit(ngx.HTTP_NO_CONTENT)
-                    else
-                        ngx.exit(ngx.HTTP_BAD_REQUEST)
-                    end
-                } 
+                proxy_pass http://unix:/tmp/nginx-cache-purge.sock;
+                
+                rewrite ^ /?cache_path=/tmp/cache&levels=1:2&key=$my_cache_key break;
             }
 
             proxy_pass upstream;
@@ -74,6 +122,16 @@ After finishing the settings:
 
 * Request `PURGE /path/to/abc` to purge the cache from `GET /path/to/abc`.
 * Request `PURGE /path/to/*` to purge all caches from `GET /path/to/**/*`.
+
+### No Service
+
+If we want to use `nginx-cache-purge` CLI with [lua-nginx-module](https://github.com/openresty/lua-nginx-module), instead of running the service in the background.
+
+We can choose to disable the default features to obtain a much smaller executable binary.
+
+```bash
+cargo install nginx-cache-purge --no-default-features
+```
 
 ## License
 
