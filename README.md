@@ -132,6 +132,8 @@ After finishing the settings:
 
 If the service successfully removes any cache, it will respond the HTTP status code **200**. If no cache needs to be removed, it will respond the HTTP status code **202**.
 
+The `remove_first` field can be set to the query of the `/` endpoint URL, allowing the exclusion of the prefix from the request path of the `key`.
+
 ### No Service
 
 If we want to use `nginx-cache-purge` CLI with [lua-nginx-module](https://github.com/openresty/lua-nginx-module), instead of running the service in the background.

@@ -52,17 +52,24 @@ impl Accept for ServerAccept {
 
 #[derive(Debug, Deserialize)]
 struct Args {
-    cache_path: PathBuf,
-    levels:     String,
-    key:        String,
+    cache_path:   PathBuf,
+    levels:       String,
+    key:          String,
+    remove_first: Option<String>,
 }
 
 async fn index_handler(args: Query<Args>) -> impl IntoResponse {
     let Args {
         cache_path,
         levels,
-        key,
+        mut key,
+        remove_first,
     } = args.0;
+    if let Some(remove_first) = remove_first {
+        if let Some(index) = key.find(remove_first.as_str()) {
+            key.replace_range(index..index + remove_first.len(), "");
+        }
+    }
 
     match tokio::task::spawn_blocking(|| purge(cache_path, levels, key)).await.unwrap() {
         Ok(result) => match result {
