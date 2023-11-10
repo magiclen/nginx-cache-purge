@@ -20,7 +20,7 @@ cargo install nginx-cache-purge
 From GitHub (Linux x86_64),
 
 ```bash
-(curl -s https://api.github.com/repos/magiclen/nginx-cache-purge/releases/latest | sed -r -n 's/.*"browser_download_url": *"(.*\/nginx-cache-purge_'$(uname -m)')".*/\1/p' | wget -i -) && sudo mv nginx-cache-purge_$(uname -m) /usr/local/bin/nginx-cache-purge && sudo chmod +x /usr/local/bin/nginx-cache-purge
+curl -fL "$(curl -fsS https://api.github.com/repos/magiclen/nginx-cache-purge/releases/latest | sed -r -n 's/.*"browser_download_url": *"(.*\/nginx-cache-purge_'$(uname -m)')".*/\1/p')" -O && sudo mv nginx-cache-purge_$(uname -m) /usr/local/bin/nginx-cache-purge && sudo chmod +x /usr/local/bin/nginx-cache-purge
 
 # sudo rm /usr/local/bin/nginx-cache-purge
 ```
