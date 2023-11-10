@@ -16,6 +16,7 @@ use server::*;
 pub enum AppResult {
     Ok,
     AlreadyPurged(PathBuf),
+    AlreadyPurgedWildcard,
 }
 
 impl From<()> for AppResult {
@@ -35,6 +36,7 @@ impl Termination for AppResult {
 
                 44
             },
+            AppResult::AlreadyPurgedWildcard => 44,
         };
 
         ExitCode::from(exit_code)
@@ -51,12 +53,8 @@ fn purge<P: AsRef<Path>, L: AsRef<str>, K: AsRef<str>>(
     let levels = levels.as_ref();
     let key = key.as_ref();
 
-    if key.ends_with('*') {
-        if key.len() == 1 {
-            functions::remove_all_files_in_directory(cache_path).map(|ok| ok.into())
-        } else {
-            functions::remove_caches_via_wildcard(cache_path, levels, key).map(|ok| ok.into())
-        }
+    if key.contains('*') {
+        functions::remove_caches_via_wildcard(cache_path, levels, key)
     } else {
         functions::remove_one_cache(cache_path, levels, key)
     }

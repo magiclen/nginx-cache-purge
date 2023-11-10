@@ -29,11 +29,12 @@ curl -fL "$(curl -fsS https://api.github.com/repos/magiclen/nginx-cache-purge/re
 
 ```
 EXAMPLES:
-nginx-cache-purge purge /path/to/cache 1:2 http/blog/      # Purge the cache with the key "http/blog/" in the "cache zone" whose "path" is /path/to/cache, "levels" is 1:2
-nginx-cache-purge purge /path/to/cache 1:1:1 http/blog*    # Purge the caches with the key which has "http/blog" as its prefix in the "cache zone" whose "path" is /path/to/cache, "levels" is 1:1:1
-nginx-cache-purge purge /path/to/cache 2 *                 # Purge all caches in the "cache zone" whose "path" is /path/to/cache, "levels" is 1:1:1
-nginx-cache-purge start                                    # Start a server which listens on "/tmp/nginx-cache-purge.sock" to handle purge requests
-nginx-cache-purge start /run/nginx-cache-purge.sock        # Start a server which listens on "/run/nginx-cache-purge.sock" to handle purge requests
+nginx-cache-purge purge /path/to/cache 1:2 http/blog/    # Purge the cache with the key "http/blog/" in the "cache zone" whose "path" is /path/to/cache, "levels" is 1:2
+nginx-cache-purge purge /path/to/cache 1:1:1 http/blog*  # Purge the caches with the key which has "http/blog" as its prefix in the "cache zone" whose "path" is /path/to/cache, "levels" is 1:1:1
+nginx-cache-purge purge /path/to/cache 1 */help*         # Purge the caches with the key which contains the substring "/help" in the "cache zone" whose "path" is /path/to/cache, "levels" is 1
+nginx-cache-purge purge /path/to/cache 2 *               # Purge all caches in the "cache zone" whose "path" is /path/to/cache, "levels" is 2
+nginx-cache-purge start                                  # Start a server which listens on "/tmp/nginx-cache-purge.sock" to handle purge requests
+nginx-cache-purge start /run/nginx-cache-purge.sock      # Start a server which listens on "/run/nginx-cache-purge.sock" to handle purge requests
 
 Usage: nginx-cache-purge <COMMAND>
 
@@ -46,6 +47,8 @@ Options:
   -h, --help     Print help
   -V, --version  Print version
 ```
+
+If the `purge` command successfully removes any cache, it returns the exit status **0**. If no cache needs to be removed, it returns the exit status **44**.
 
 ### Nginx + Nginx Cache Purge
 
@@ -97,20 +100,21 @@ http {
     }
 
     proxy_cache_path /tmp/cache levels=1:2 keys_zone=my_cache:10m;
-    proxy_cache_key $scheme$proxy_host$request_uri;
+    proxy_cache_key $scheme$request_uri;
 
     server {
         ...
 
         location / {
-            set $my_cache_key $scheme$proxy_host$request_uri;
-            
             if ($is_purge) {
+                set $my_cache_key $scheme$request_uri;
+            
                 proxy_pass http://unix:/tmp/nginx-cache-purge.sock;
                 
                 rewrite ^ /?cache_path=/tmp/cache&levels=1:2&key=$my_cache_key break;
             }
 
+            proxy_cache my_cache;
             proxy_pass upstream;
             include proxy_params;
         }
@@ -118,12 +122,15 @@ http {
 }
 ```
 
-Remember to add your access authentication mechanisms to prevent strangers from purging your cache.
+Remember to add your access authentication mechanisms to prevent strangers from purging your cache. And note that the cache key should not contain `$proxy_host` because it will be empty when the request is in `proxy_pass http://unix:...`.
 
 After finishing the settings:
 
 * Request `PURGE /path/to/abc` to purge the cache from `GET /path/to/abc`.
 * Request `PURGE /path/to/*` to purge all caches from `GET /path/to/**/*`.
+* Request `PURGE /path/to/*/foo/*/bar` to purge caches from `GET /path/to/**/foo/**/bar`.
+
+If the service successfully removes any cache, it will respond the HTTP status code **200**. If no cache needs to be removed, it will respond the HTTP status code **202**.
 
 ### No Service
 

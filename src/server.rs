@@ -67,7 +67,9 @@ async fn index_handler(args: Query<Args>) -> impl IntoResponse {
     match tokio::task::spawn_blocking(|| purge(cache_path, levels, key)).await.unwrap() {
         Ok(result) => match result {
             AppResult::Ok => (StatusCode::OK, "Ok.".to_string()),
-            AppResult::AlreadyPurged(_) => (StatusCode::ACCEPTED, "Not exists.".to_string()),
+            AppResult::AlreadyPurged(_) | AppResult::AlreadyPurgedWildcard => {
+                (StatusCode::ACCEPTED, "No cache needs to be purged.".to_string())
+            },
         },
         Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()),
     }
