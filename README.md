@@ -38,8 +38,8 @@ nginx-cache-purge start /run/nginx-cache-purge.sock        # Start a server whic
 Usage: nginx-cache-purge <COMMAND>
 
 Commands:
-  purge  Purge the cache immediately
-  start  Start a server to handle purge requests
+  purge  Purge the cache immediately [aliases: p]
+  start  Start a server to handle purge requests [aliases: s]
   help   Print this message or the help of the given subcommand(s)
 
 Options:

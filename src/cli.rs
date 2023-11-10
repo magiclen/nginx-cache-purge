@@ -34,6 +34,7 @@ pub struct CLIArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum CLICommands {
+    #[command(visible_alias = "p")]
     #[command(about = "Purge the cache immediately")]
     #[command(after_help = AFTER_HELP)]
     Purge {
@@ -48,6 +49,7 @@ pub enum CLICommands {
         key: String,
     },
     #[cfg(feature = "service")]
+    #[command(visible_alias = "s")]
     #[command(about = "Start a server to handle purge requests")]
     #[command(after_help = AFTER_HELP)]
     Start {
