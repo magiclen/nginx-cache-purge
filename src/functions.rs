@@ -390,13 +390,14 @@ async fn match_key_and_remove_one_cache<P: AsRef<Path>>(
 ) -> anyhow::Result<bool> {
     let file_path = file_path.as_ref();
 
-    let mut sc: ScannerAscii<_, U384> = ScannerAscii::scan_path2(file_path)?;
+    let mut sc: ScannerAscii<_, U384> =
+        ScannerAscii::scan_path2(file_path).with_context(|| anyhow!("{file_path:?}"))?;
 
     // skip the header
-    sc.drop_next_line()?;
+    sc.drop_next_line().with_context(|| anyhow!("{file_path:?}"))?;
 
     // skip the label
-    sc.drop_next_bytes("KEY: ".len())?;
+    sc.drop_next_bytes("KEY: ".len()).with_context(|| anyhow!("{file_path:?}"))?;
 
     let read_key = sc
         .next_line_raw()
