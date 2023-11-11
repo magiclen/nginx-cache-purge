@@ -17,6 +17,7 @@ use tokio::runtime;
 pub enum AppResult {
     Ok,
     AlreadyPurged(PathBuf),
+    CacheIgnored,
     AlreadyPurgedWildcard,
 }
 
@@ -37,6 +38,11 @@ impl Termination for AppResult {
 
                 44
             },
+            AppResult::CacheIgnored => {
+                eprintln!("Warning: cache is excluded from purging");
+
+                44
+            },
             AppResult::AlreadyPurgedWildcard => 44,
         };
 
@@ -45,19 +51,20 @@ impl Termination for AppResult {
 }
 
 #[inline]
-async fn purge<P: AsRef<Path>, L: AsRef<str>, K: AsRef<str>>(
+async fn purge<P: AsRef<Path>, L: AsRef<str>, K: AsRef<str>, EK: AsRef<str>>(
     cache_path: P,
     levels: L,
     key: K,
+    exclude_keys: Vec<EK>,
 ) -> anyhow::Result<AppResult> {
     let cache_path = cache_path.as_ref();
     let levels = levels.as_ref();
     let key = key.as_ref();
 
     if key.contains('*') {
-        functions::remove_caches_via_wildcard(cache_path, levels, key).await
+        functions::remove_caches_via_wildcard(cache_path, levels, key, exclude_keys).await
     } else {
-        functions::remove_one_cache(cache_path, levels, key).await
+        functions::remove_one_cache(cache_path, levels, key, exclude_keys).await
     }
 }
 
@@ -72,7 +79,19 @@ fn main() -> anyhow::Result<AppResult> {
                 cache_path,
                 levels,
                 key,
-            } => purge(cache_path, levels, key).await,
+                exclude_keys,
+            } => {
+                purge(
+                    cache_path,
+                    levels,
+                    key,
+                    exclude_keys
+                        .as_ref()
+                        .map(|e| e.iter().map(|s| s.as_str()).collect::<Vec<&str>>())
+                        .unwrap_or_else(Vec::new),
+                )
+                .await
+            },
             #[cfg(feature = "service")]
             CLICommands::Start {
                 socket_file_path,

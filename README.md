@@ -29,12 +29,13 @@ curl -fL "$(curl -fsS https://api.github.com/repos/magiclen/nginx-cache-purge/re
 
 ```
 EXAMPLES:
-nginx-cache-purge purge /path/to/cache 1:2 http/blog/       # Purge the cache with the key "http/blog/" in the "cache zone" whose "path" is /path/to/cache, "levels" is 1:2
-nginx-cache-purge purge /path/to/cache 1:1:1 'http/blog*'   # Purge the caches with the key which has "http/blog" as its prefix in the "cache zone" whose "path" is /path/to/cache, "levels" is 1:1:1
-nginx-cache-purge purge /path/to/cache 1 '*/help*'          # Purge the caches with the key which contains the substring "/help" in the "cache zone" whose "path" is /path/to/cache, "levels" is 1
-nginx-cache-purge purge /path/to/cache 2 '*'                # Purge all caches in the "cache zone" whose "path" is /path/to/cache, "levels" is 2
-nginx-cache-purge start                                     # Start a server which listens on "/tmp/nginx-cache-purge.sock" to handle purge requests
-nginx-cache-purge start /run/nginx-cache-purge.sock         # Start a server which listens on "/run/nginx-cache-purge.sock" to handle purge requests
+nginx-cache-purge p /path/to/cache 1:2 http/blog/            # Purge the cache with the key "http/blog/" in the "cache zone" whose "path" is /path/to/cache, "levels" is 1:2
+nginx-cache-purge p /path/to/cache 1:1:1 'http/blog*'        # Purge the caches with the key which has "http/blog" as its prefix in the "cache zone" whose "path" is /path/to/cache, "levels" is 1:1:1
+nginx-cache-purge p /path/to/cache 1 '*/help*'               # Purge the caches with the key which contains the substring "/help" in the "cache zone" whose "path" is /path/to/cache, "levels" is 1
+nginx-cache-purge p /path/to/cache 2 '*'                     # Purge all caches in the "cache zone" whose "path" is /path/to/cache, "levels" is 2
+nginx-cache-purge p /path/to/cache 3 '*' -e 'http/static/*'  # Purge all caches except for those whose key starts with "http/static/" in the "cache zone" whose "path" is /path/to/cache, "levels" is 3
+nginx-cache-purge s                                          # Start a server which listens on "/tmp/nginx-cache-purge.sock" to handle purge requests
+nginx-cache-purge s /run/nginx-cache-purge.sock              # Start a server which listens on "/run/nginx-cache-purge.sock" to handle purge requests
 
 Usage: nginx-cache-purge <COMMAND>
 
@@ -132,7 +133,10 @@ After finishing the settings:
 
 If the service successfully removes any cache, it will respond the HTTP status code **200**. If no cache needs to be removed, it will respond the HTTP status code **202**.
 
-The `remove_first` field can be set to the query of the `/` endpoint URL, allowing the exclusion of the prefix from the request path of the `key`.
+Other fields that can be set to the query of the `/` endpoint URL:
+
+* `remove_first`: Allow the exclusion of the prefix from the request path of the `key`. The format should be like `?remove_first=/purge`.
+* `exclude_keys` (can be more than one): Exclude those keys from the purging process. It also supports the use of wildcards. The format should be like `?exclude_keys=http/static/*&exclude_keys=http/1`. The `remove_first` field does not affect `exclude_keys` fields.
 
 ### No Service
 

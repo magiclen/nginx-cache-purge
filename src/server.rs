@@ -10,12 +10,12 @@ use std::{
 
 use anyhow::{anyhow, Context as AnyhowContext};
 use axum::{
-    extract::Query,
     http::{header, HeaderValue, StatusCode},
     response::IntoResponse,
     routing::any,
     BoxError, Router,
 };
+use axum_extra::extract::Query;
 use hyper::server::accept::Accept;
 use serde::Deserialize;
 use tokio::{
@@ -50,34 +50,54 @@ impl Accept for ServerAccept {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum OneOrManyString {
+    One(String),
+    Many(Vec<String>),
+}
+
+impl From<OneOrManyString> for Vec<String> {
+    #[inline]
+    fn from(value: OneOrManyString) -> Self {
+        match value {
+            OneOrManyString::One(s) => vec![s],
+            OneOrManyString::Many(v) => v,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
 struct Args {
     cache_path:   PathBuf,
     levels:       String,
     key:          String,
     remove_first: Option<String>,
+    exclude_keys: Option<OneOrManyString>,
 }
 
-async fn index_handler(args: Query<Args>) -> impl IntoResponse {
-    let Args {
+async fn index_handler(
+    Query(Args {
         cache_path,
         levels,
         mut key,
         remove_first,
-    } = args.0;
+        exclude_keys,
+    }): Query<Args>,
+) -> impl IntoResponse {
     if let Some(remove_first) = remove_first {
         if let Some(index) = key.find(remove_first.as_str()) {
             key.replace_range(index..index + remove_first.len(), "");
         }
     }
 
-    match purge(cache_path, levels, key).await {
+    match purge(cache_path, levels, key, exclude_keys.map(|e| e.into()).unwrap_or_else(Vec::new))
+        .await
+    {
         Ok(result) => match result {
             AppResult::Ok => (StatusCode::OK, "Ok.".to_string()),
-            AppResult::AlreadyPurged(_) | AppResult::AlreadyPurgedWildcard => {
-                (StatusCode::ACCEPTED, "No cache needs to be purged.".to_string())
-            },
+            _ => (StatusCode::ACCEPTED, "No cache needs to be purged.".to_string()),
         },
-        Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()),
+        Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, format!("{error:?}")),
     }
 }
 

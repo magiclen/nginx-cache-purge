@@ -13,12 +13,13 @@ const AFTER_HELP: &str = "Enjoy it! https://magiclen.org";
 const APP_ABOUT: &str = concat!(
     "An alternative way to do proxy_cache_purge or fastcgi_cache_purge for Nginx.\n\nEXAMPLES:\n",
     concat_line!(prefix "nginx-cache-purge ",
-        "purge /path/to/cache 1:2 http/blog/       # Purge the cache with the key \"http/blog/\" in the \"cache zone\" whose \"path\" is /path/to/cache, \"levels\" is 1:2",
-        "purge /path/to/cache 1:1:1 'http/blog*'   # Purge the caches with the key which has \"http/blog\" as its prefix in the \"cache zone\" whose \"path\" is /path/to/cache, \"levels\" is 1:1:1",
-        "purge /path/to/cache 1 '*/help*'          # Purge the caches with the key which contains the substring \"/help\" in the \"cache zone\" whose \"path\" is /path/to/cache, \"levels\" is 1",
-        "purge /path/to/cache 2 '*'                # Purge all caches in the \"cache zone\" whose \"path\" is /path/to/cache, \"levels\" is 2",
-        "start                                     # Start a server which listens on \"/tmp/nginx-cache-purge.sock\" to handle purge requests",
-        "start /run/nginx-cache-purge.sock         # Start a server which listens on \"/run/nginx-cache-purge.sock\" to handle purge requests",
+        "p /path/to/cache 1:2 http/blog/            # Purge the cache with the key \"http/blog/\" in the \"cache zone\" whose \"path\" is /path/to/cache, \"levels\" is 1:2",
+        "p /path/to/cache 1:1:1 'http/blog*'        # Purge the caches with the key which has \"http/blog\" as its prefix in the \"cache zone\" whose \"path\" is /path/to/cache, \"levels\" is 1:1:1",
+        "p /path/to/cache 1 '*/help*'               # Purge the caches with the key which contains the substring \"/help\" in the \"cache zone\" whose \"path\" is /path/to/cache, \"levels\" is 1",
+        "p /path/to/cache 2 '*'                     # Purge all caches in the \"cache zone\" whose \"path\" is /path/to/cache, \"levels\" is 2",
+        "p /path/to/cache 3 '*' -e 'http/static/*'  # Purge all caches except for those whose key starts with \"http/static/\" in the \"cache zone\" whose \"path\" is /path/to/cache, \"levels\" is 3",
+        "s                                          # Start a server which listens on \"/tmp/nginx-cache-purge.sock\" to handle purge requests",
+        "s /run/nginx-cache-purge.sock              # Start a server which listens on \"/run/nginx-cache-purge.sock\" to handle purge requests",
     )
 );
 
@@ -48,6 +49,11 @@ pub enum CLICommands {
 
         #[arg(help = "Assign the key set by proxy_cache_key or fastcgi_cache_key")]
         key: String,
+
+        #[arg(short, long, visible_alias = "exclude-key")]
+        #[arg(num_args = 1..)]
+        #[arg(help = "Assign the keys that should be excluded")]
+        exclude_keys: Option<Vec<String>>,
     },
     #[cfg(feature = "service")]
     #[command(visible_alias = "s")]

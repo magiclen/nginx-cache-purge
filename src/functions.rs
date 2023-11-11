@@ -132,10 +132,11 @@ pub async fn remove_all_files_in_directory<P: AsRef<Path>>(path: P) -> anyhow::R
 }
 
 /// Purge a cache with a specific key.
-pub async fn remove_one_cache<P: AsRef<Path>, L: AsRef<str>, K: AsRef<str>>(
+pub async fn remove_one_cache<P: AsRef<Path>, L: AsRef<str>, K: AsRef<str>, EK: AsRef<str>>(
     cache_path: P,
     levels: L,
     key: K,
+    exclude_keys: Vec<EK>,
 ) -> anyhow::Result<AppResult> {
     let levels = parse_levels_stage_1(&levels)?;
     let number_of_levels = levels.len();
@@ -154,8 +155,18 @@ pub async fn remove_one_cache<P: AsRef<Path>, L: AsRef<str>, K: AsRef<str>>(
         levels_usize.push(level_usize);
     }
 
+    let key = key.as_ref();
+
+    for exclude_key in exclude_keys {
+        let keys = parse_key(&exclude_key);
+
+        if hit_key(key, &keys) {
+            return Ok(AppResult::CacheIgnored);
+        }
+    }
+
     let mut hasher = Md5::new();
-    hasher.update(key.as_ref());
+    hasher.update(key);
 
     let key_md5_value = u128::from_be_bytes(hasher.finalize().into());
     let hashed_key = format!("{:032x}", key_md5_value);
@@ -184,16 +195,63 @@ pub async fn remove_one_cache<P: AsRef<Path>, L: AsRef<str>, K: AsRef<str>>(
     }
 }
 
+fn parse_key<K: AsRef<str>>(key: &K) -> Vec<&[u8]> {
+    let key = key.as_ref().as_bytes();
+
+    debug_assert!(!key.is_empty());
+
+    let mut v = Vec::new();
+
+    let mut p = 0;
+    let key_len = key.len();
+
+    loop {
+        match key[p..].iter().cloned().position(|u| u == b'*').map(|i| i + p) {
+            Some(i) => {
+                if i == p {
+                    // don't allow duplicated empty string to be added into Vec (when key is like foo**bar)
+                    if v.is_empty() {
+                        v.push([].as_slice());
+                    }
+                } else {
+                    v.push(&key[p..i]);
+                    v.push(&[]);
+                }
+
+                p = i + 1;
+
+                if p >= key_len {
+                    break;
+                }
+            },
+            None => {
+                v.push(&key[p..]);
+
+                break;
+            },
+        }
+    }
+
+    v
+}
+
 /// Purge multiple caches via wildcard.
-pub async fn remove_caches_via_wildcard<P: AsRef<Path>, L: AsRef<str>, K: AsRef<str>>(
+pub async fn remove_caches_via_wildcard<
+    P: AsRef<Path>,
+    L: AsRef<str>,
+    K: AsRef<str>,
+    EK: AsRef<str>,
+>(
     cache_path: P,
     levels: L,
     key: K,
+    exclude_keys: Vec<EK>,
 ) -> anyhow::Result<AppResult> {
     #[async_recursion]
     async fn iterate(
         levels: Arc<Vec<String>>,
         keys: Arc<Vec<Vec<u8>>>,
+        exclude_key_keys: Arc<Vec<Vec<Vec<u8>>>>,
         path: PathBuf,
         level: usize,
     ) -> anyhow::Result<bool> {
@@ -217,6 +275,7 @@ pub async fn remove_caches_via_wildcard<P: AsRef<Path>, L: AsRef<str>, K: AsRef<
                     tasks.push(tokio::spawn(match_key_and_remove_one_cache(
                         dir_entry.path(),
                         keys.clone(),
+                        exclude_key_keys.clone(),
                         number_of_levels,
                     )));
                 }
@@ -224,6 +283,7 @@ pub async fn remove_caches_via_wildcard<P: AsRef<Path>, L: AsRef<str>, K: AsRef<
                 tasks.push(tokio::spawn(iterate(
                     levels.clone(),
                     keys.clone(),
+                    exclude_key_keys.clone(),
                     dir_entry.path(),
                     level + 1,
                 )));
@@ -237,47 +297,13 @@ pub async fn remove_caches_via_wildcard<P: AsRef<Path>, L: AsRef<str>, K: AsRef<
         Ok(result)
     }
 
-    let key = key.as_ref().as_bytes();
+    let keys = parse_key(&key);
+    let exclude_key_keys: Vec<Vec<Vec<u8>>> = exclude_keys
+        .iter()
+        .map(|v| parse_key(v).into_iter().map(|v| v.to_vec()).collect())
+        .collect();
 
-    debug_assert!(!key.is_empty());
-
-    let keys = {
-        let mut v = Vec::new();
-
-        let mut p = 0;
-        let key_len = key.len();
-
-        loop {
-            match key[p..].iter().cloned().position(|u| u == b'*').map(|i| i + p) {
-                Some(i) => {
-                    if i == p {
-                        // don't allow duplicated empty string to be added into Vec (when key is like foo**bar)
-                        if v.is_empty() {
-                            v.push([].as_slice());
-                        }
-                    } else {
-                        v.push(&key[p..i]);
-                        v.push(&[]);
-                    }
-
-                    p = i + 1;
-
-                    if p >= key_len {
-                        break;
-                    }
-                },
-                None => {
-                    v.push(&key[p..]);
-
-                    break;
-                },
-            }
-        }
-
-        v
-    };
-
-    if keys.len() == 1 && keys[0].is_empty() {
+    if keys.len() == 1 && keys[0].is_empty() && exclude_key_keys.is_empty() {
         return remove_all_files_in_directory(cache_path).await.map(|modified| {
             if modified {
                 AppResult::Ok
@@ -294,42 +320,21 @@ pub async fn remove_caches_via_wildcard<P: AsRef<Path>, L: AsRef<str>, K: AsRef<
 
     let path = cache_path.as_ref();
 
-    iterate(Arc::new(levels), Arc::new(keys), path.to_path_buf(), 0).await.map(|modified| {
-        if modified {
-            AppResult::Ok
-        } else {
-            AppResult::AlreadyPurgedWildcard
-        }
-    })
+    iterate(Arc::new(levels), Arc::new(keys), Arc::new(exclude_key_keys), path.to_path_buf(), 0)
+        .await
+        .map(|modified| if modified { AppResult::Ok } else { AppResult::AlreadyPurgedWildcard })
 }
 
-async fn match_key_and_remove_one_cache<P: AsRef<Path>>(
-    file_path: P,
-    keys: Arc<Vec<Vec<u8>>>,
-    number_of_levels: usize,
-) -> anyhow::Result<bool> {
-    let file_path = file_path.as_ref();
-
-    let mut sc: ScannerAscii<_, U384> = ScannerAscii::scan_path2(file_path)?;
-
-    // skip the header
-    sc.drop_next_line()?;
-
-    // skip the label
-    sc.drop_next_bytes("KEY: ".len())?;
-
-    let read_key = sc
-        .next_line_raw()
-        .with_context(|| anyhow!("{file_path:?}"))?
-        .ok_or(anyhow!("The content of {file_path:?} is incorrect."))?;
+fn hit_key<RK: AsRef<[u8]>, K: AsRef<[u8]>>(read_key: RK, keys: &[K]) -> bool {
+    let read_key = read_key.as_ref();
 
     let mut p = 0;
     let mut i = 0;
     let read_key_len = read_key.len();
     let keys_len = keys.len();
 
-    let hit = loop {
-        let key = &keys[i];
+    loop {
+        let key = keys[i].as_ref();
         let key_len = key.len();
 
         if key_len == 0 {
@@ -339,7 +344,7 @@ async fn match_key_and_remove_one_cache<P: AsRef<Path>>(
                 break true;
             }
 
-            let key = &keys[i];
+            let key = keys[i].as_ref();
             let key_len = key.len();
             debug_assert!(!key.is_empty());
 
@@ -374,9 +379,40 @@ async fn match_key_and_remove_one_cache<P: AsRef<Path>>(
                 break false;
             }
         }
-    };
+    }
+}
 
-    if hit {
+async fn match_key_and_remove_one_cache<P: AsRef<Path>>(
+    file_path: P,
+    keys: Arc<Vec<Vec<u8>>>,
+    exclude_key_keys: Arc<Vec<Vec<Vec<u8>>>>,
+    number_of_levels: usize,
+) -> anyhow::Result<bool> {
+    let file_path = file_path.as_ref();
+
+    let mut sc: ScannerAscii<_, U384> = ScannerAscii::scan_path2(file_path)?;
+
+    // skip the header
+    sc.drop_next_line()?;
+
+    // skip the label
+    sc.drop_next_bytes("KEY: ".len())?;
+
+    let read_key = sc
+        .next_line_raw()
+        .with_context(|| anyhow!("{file_path:?}"))?
+        .ok_or(anyhow!("The content of {file_path:?} is incorrect."))?;
+
+    // drop sc
+    drop(sc);
+
+    for exclude_key_key in exclude_key_keys.as_ref() {
+        if hit_key(read_key.as_slice(), exclude_key_key) {
+            return Ok(false);
+        }
+    }
+
+    if hit_key(read_key, keys.as_ref()) {
         match remove_file(file_path).await {
             Ok(_) => (),
             Err(error) if error.kind() == io::ErrorKind::NotFound => (),
