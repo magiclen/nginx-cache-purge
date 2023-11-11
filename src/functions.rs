@@ -1,13 +1,18 @@
-use std::{io, path::Path};
+use std::{
+    io,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use anyhow::{anyhow, Context};
+use async_recursion::async_recursion;
 use md5::{Digest, Md5};
 use scanner_rust::{generic_array::typenum::U384, ScannerAscii};
 
 use crate::AppResult;
 
 #[inline]
-fn remove_file<P: AsRef<Path>>(path: P) -> io::Result<()> {
+async fn remove_file<P: AsRef<Path>>(path: P) -> io::Result<()> {
     let path = path.as_ref();
 
     if cfg!(debug_assertions) {
@@ -15,12 +20,12 @@ fn remove_file<P: AsRef<Path>>(path: P) -> io::Result<()> {
 
         Ok(())
     } else {
-        std::fs::remove_file(path)
+        tokio::fs::remove_file(path).await
     }
 }
 
 #[inline]
-fn remove_dir_all<P: AsRef<Path>>(path: P) -> io::Result<()> {
+async fn remove_dir_all<P: AsRef<Path>>(path: P) -> io::Result<()> {
     let path = path.as_ref();
 
     if cfg!(debug_assertions) {
@@ -28,18 +33,18 @@ fn remove_dir_all<P: AsRef<Path>>(path: P) -> io::Result<()> {
 
         Ok(())
     } else {
-        std::fs::remove_dir_all(path)
+        tokio::fs::remove_dir_all(path).await
     }
 }
 
 #[inline]
-fn remove_dir<P: AsRef<Path>>(path: P) -> io::Result<()> {
+async fn remove_dir<P: AsRef<Path>>(path: P) -> io::Result<()> {
     let path = path.as_ref();
 
     if cfg!(debug_assertions) {
         println!("Remove dir: {path:?}");
     } else {
-        match std::fs::remove_dir(path) {
+        match tokio::fs::remove_dir(path).await {
             Ok(_) => (),
             Err(error) => {
                 // check if the error is caused by directory is not empty
@@ -56,10 +61,13 @@ fn remove_dir<P: AsRef<Path>>(path: P) -> io::Result<()> {
     Ok(())
 }
 
-fn remove_empty_ancestors<P: AsRef<Path>>(path: P, relative_degree: usize) -> anyhow::Result<()> {
+async fn remove_empty_ancestors<P: AsRef<Path>>(
+    path: P,
+    relative_degree: usize,
+) -> anyhow::Result<()> {
     if let Some(mut path) = path.as_ref().parent() {
         for _ in 1..=relative_degree {
-            match remove_dir(path) {
+            match remove_dir(path).await {
                 Ok(_) => (),
                 Err(error)
                     if matches!(error.kind(), io::ErrorKind::NotFound | io::ErrorKind::Other) =>
@@ -82,7 +90,7 @@ fn remove_empty_ancestors<P: AsRef<Path>>(path: P, relative_degree: usize) -> an
 }
 
 /// Do something like `rm -rf /path/to/*`. The `/path/to` directory will not be deleted. This function may be dangerous.
-pub fn remove_all_files_in_directory<P: AsRef<Path>>(path: P) -> anyhow::Result<bool> {
+pub async fn remove_all_files_in_directory<P: AsRef<Path>>(path: P) -> anyhow::Result<bool> {
     let mut result = false;
 
     let path = path.as_ref();
@@ -99,7 +107,7 @@ pub fn remove_all_files_in_directory<P: AsRef<Path>>(path: P) -> anyhow::Result<
         let path = dir_entry.path();
 
         if file_type.is_dir() {
-            match remove_dir_all(&path) {
+            match remove_dir_all(&path).await {
                 Ok(_) => result = true,
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {
                     result = true;
@@ -108,7 +116,7 @@ pub fn remove_all_files_in_directory<P: AsRef<Path>>(path: P) -> anyhow::Result<
                 Err(error) => return Err(error).with_context(|| anyhow!("{path:?}")),
             }
         } else {
-            match remove_file(&path) {
+            match remove_file(&path).await {
                 Ok(_) => result = true,
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {
                     result = true;
@@ -124,7 +132,7 @@ pub fn remove_all_files_in_directory<P: AsRef<Path>>(path: P) -> anyhow::Result<
 }
 
 /// Purge a cache with a specific key.
-pub fn remove_one_cache<P: AsRef<Path>, L: AsRef<str>, K: AsRef<str>>(
+pub async fn remove_one_cache<P: AsRef<Path>, L: AsRef<str>, K: AsRef<str>>(
     cache_path: P,
     levels: L,
     key: K,
@@ -163,9 +171,9 @@ pub fn remove_one_cache<P: AsRef<Path>, L: AsRef<str>, K: AsRef<str>>(
 
     file_path.push(hashed_key);
 
-    match remove_file(&file_path) {
+    match remove_file(&file_path).await {
         Ok(_) => {
-            remove_empty_ancestors(file_path, number_of_levels)?;
+            remove_empty_ancestors(file_path, number_of_levels).await?;
 
             Ok(AppResult::Ok)
         },
@@ -177,15 +185,23 @@ pub fn remove_one_cache<P: AsRef<Path>, L: AsRef<str>, K: AsRef<str>>(
 }
 
 /// Purge multiple caches via wildcard.
-pub fn remove_caches_via_wildcard<P: AsRef<Path>, L: AsRef<str>, K: AsRef<str>>(
+pub async fn remove_caches_via_wildcard<P: AsRef<Path>, L: AsRef<str>, K: AsRef<str>>(
     cache_path: P,
     levels: L,
     key: K,
 ) -> anyhow::Result<AppResult> {
-    fn iterate(levels: &[&str], keys: &[&[u8]], path: &Path, level: usize) -> anyhow::Result<bool> {
+    #[async_recursion]
+    async fn iterate(
+        levels: Arc<Vec<String>>,
+        keys: Arc<Vec<Vec<u8>>>,
+        path: PathBuf,
+        level: usize,
+    ) -> anyhow::Result<bool> {
         let mut result = false;
 
         let number_of_levels = levels.len();
+
+        let mut tasks = Vec::new();
 
         for dir_entry in path.read_dir().with_context(|| anyhow!("{path:?}"))? {
             let dir_entry = dir_entry.with_context(|| anyhow!("{path:?}"))?;
@@ -198,13 +214,24 @@ pub fn remove_caches_via_wildcard<P: AsRef<Path>, L: AsRef<str>, K: AsRef<str>>(
 
             if number_of_levels == level {
                 if file_type.is_file() {
-                    result =
-                        match_key_and_remove_one_cache(dir_entry.path(), keys, number_of_levels)?
-                            || result;
+                    tasks.push(tokio::spawn(match_key_and_remove_one_cache(
+                        dir_entry.path(),
+                        keys.clone(),
+                        number_of_levels,
+                    )));
                 }
             } else if file_type.is_dir() {
-                result = iterate(levels, keys, dir_entry.path().as_path(), level + 1)? || result;
+                tasks.push(tokio::spawn(iterate(
+                    levels.clone(),
+                    keys.clone(),
+                    dir_entry.path(),
+                    level + 1,
+                )));
             }
+        }
+
+        for task in tasks {
+            result = task.await.unwrap()? || result;
         }
 
         Ok(result)
@@ -251,7 +278,7 @@ pub fn remove_caches_via_wildcard<P: AsRef<Path>, L: AsRef<str>, K: AsRef<str>>(
     };
 
     if keys.len() == 1 && keys[0].is_empty() {
-        return remove_all_files_in_directory(cache_path).map(|modified| {
+        return remove_all_files_in_directory(cache_path).await.map(|modified| {
             if modified {
                 AppResult::Ok
             } else {
@@ -260,11 +287,14 @@ pub fn remove_caches_via_wildcard<P: AsRef<Path>, L: AsRef<str>, K: AsRef<str>>(
         });
     }
 
-    let levels = parse_levels_stage_1(&levels)?;
+    let keys = keys.into_iter().map(|v| v.to_vec()).collect::<Vec<Vec<u8>>>();
+
+    let levels =
+        parse_levels_stage_1(&levels)?.into_iter().map(|s| s.to_string()).collect::<Vec<String>>();
 
     let path = cache_path.as_ref();
 
-    iterate(&levels, &keys, path, 0).map(|modified| {
+    iterate(Arc::new(levels), Arc::new(keys), path.to_path_buf(), 0).await.map(|modified| {
         if modified {
             AppResult::Ok
         } else {
@@ -273,9 +303,9 @@ pub fn remove_caches_via_wildcard<P: AsRef<Path>, L: AsRef<str>, K: AsRef<str>>(
     })
 }
 
-fn match_key_and_remove_one_cache<P: AsRef<Path>>(
+async fn match_key_and_remove_one_cache<P: AsRef<Path>>(
     file_path: P,
-    keys: &[&[u8]],
+    keys: Arc<Vec<Vec<u8>>>,
     number_of_levels: usize,
 ) -> anyhow::Result<bool> {
     let file_path = file_path.as_ref();
@@ -299,7 +329,7 @@ fn match_key_and_remove_one_cache<P: AsRef<Path>>(
     let keys_len = keys.len();
 
     let hit = loop {
-        let key = keys[i];
+        let key = &keys[i];
         let key_len = key.len();
 
         if key_len == 0 {
@@ -309,7 +339,7 @@ fn match_key_and_remove_one_cache<P: AsRef<Path>>(
                 break true;
             }
 
-            let key = keys[i];
+            let key = &keys[i];
             let key_len = key.len();
             debug_assert!(!key.is_empty());
 
@@ -347,13 +377,13 @@ fn match_key_and_remove_one_cache<P: AsRef<Path>>(
     };
 
     if hit {
-        match remove_file(file_path) {
+        match remove_file(file_path).await {
             Ok(_) => (),
             Err(error) if error.kind() == io::ErrorKind::NotFound => (),
             Err(error) => return Err(error).with_context(|| anyhow!("{file_path:?}")),
         }
 
-        remove_empty_ancestors(file_path, number_of_levels)?;
+        remove_empty_ancestors(file_path, number_of_levels).await?;
 
         Ok(true)
     } else {

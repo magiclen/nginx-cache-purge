@@ -11,6 +11,7 @@ use std::{
 use cli::*;
 #[cfg(feature = "service")]
 use server::*;
+use tokio::runtime;
 
 #[derive(Debug)]
 pub enum AppResult {
@@ -44,7 +45,7 @@ impl Termination for AppResult {
 }
 
 #[inline]
-fn purge<P: AsRef<Path>, L: AsRef<str>, K: AsRef<str>>(
+async fn purge<P: AsRef<Path>, L: AsRef<str>, K: AsRef<str>>(
     cache_path: P,
     levels: L,
     key: K,
@@ -54,24 +55,28 @@ fn purge<P: AsRef<Path>, L: AsRef<str>, K: AsRef<str>>(
     let key = key.as_ref();
 
     if key.contains('*') {
-        functions::remove_caches_via_wildcard(cache_path, levels, key)
+        functions::remove_caches_via_wildcard(cache_path, levels, key).await
     } else {
-        functions::remove_one_cache(cache_path, levels, key)
+        functions::remove_one_cache(cache_path, levels, key).await
     }
 }
 
 fn main() -> anyhow::Result<AppResult> {
     let args = get_args();
 
-    match &args.command {
-        CLICommands::Purge {
-            cache_path,
-            levels,
-            key,
-        } => purge(cache_path, levels, key),
-        #[cfg(feature = "service")]
-        CLICommands::Start {
-            socket_file_path,
-        } => server_main(socket_file_path.as_path()),
-    }
+    let runtime = runtime::Runtime::new()?;
+
+    runtime.block_on(async move {
+        match &args.command {
+            CLICommands::Purge {
+                cache_path,
+                levels,
+                key,
+            } => purge(cache_path, levels, key).await,
+            #[cfg(feature = "service")]
+            CLICommands::Start {
+                socket_file_path,
+            } => server_main(socket_file_path.as_path()).await,
+        }
+    })
 }

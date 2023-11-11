@@ -21,7 +21,6 @@ use serde::Deserialize;
 use tokio::{
     fs,
     net::{UnixListener, UnixStream},
-    runtime,
 };
 use tower_http::{
     set_header::SetResponseHeaderLayer,
@@ -71,7 +70,7 @@ async fn index_handler(args: Query<Args>) -> impl IntoResponse {
         }
     }
 
-    match tokio::task::spawn_blocking(|| purge(cache_path, levels, key)).await.unwrap() {
+    match purge(cache_path, levels, key).await {
         Ok(result) => match result {
             AppResult::Ok => (StatusCode::OK, "Ok.".to_string()),
             AppResult::AlreadyPurged(_) | AppResult::AlreadyPurgedWildcard => {
@@ -142,7 +141,7 @@ async fn run(socket_file_path: &Path) -> anyhow::Result<AppResult> {
 }
 
 #[inline]
-pub fn server_main(socket_file_path: &Path) -> anyhow::Result<AppResult> {
+pub async fn server_main(socket_file_path: &Path) -> anyhow::Result<AppResult> {
     let mut ansi_color = io::stdout().is_terminal();
 
     if ansi_color && enable_ansi_support::enable_ansi_support().is_err() {
@@ -154,7 +153,5 @@ pub fn server_main(socket_file_path: &Path) -> anyhow::Result<AppResult> {
         .with(EnvFilter::builder().with_default_directive(Level::INFO.into()).from_env_lossy())
         .init();
 
-    let runtime = runtime::Runtime::new()?;
-
-    runtime.block_on(run(socket_file_path))
+    run(socket_file_path).await
 }
