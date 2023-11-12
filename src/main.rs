@@ -39,7 +39,7 @@ impl Termination for AppResult {
                 44
             },
             AppResult::CacheIgnored => {
-                eprintln!("Warning: cache is excluded from purging");
+                eprintln!("Warning: cache is excluded from being purged");
 
                 44
             },
