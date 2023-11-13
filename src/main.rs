@@ -85,10 +85,7 @@ fn main() -> anyhow::Result<AppResult> {
                     cache_path,
                     levels,
                     key,
-                    exclude_keys
-                        .as_ref()
-                        .map(|e| e.iter().map(|s| s.as_str()).collect::<Vec<&str>>())
-                        .unwrap_or_else(Vec::new),
+                    exclude_keys.iter().map(|s| s.as_str()).collect::<Vec<&str>>(),
                 )
                 .await
             },

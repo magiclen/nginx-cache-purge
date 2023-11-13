@@ -53,7 +53,7 @@ pub enum CLICommands {
         #[arg(short, long, visible_alias = "exclude-key")]
         #[arg(num_args = 1..)]
         #[arg(help = "Assign the keys that should be excluded")]
-        exclude_keys: Option<Vec<String>>,
+        exclude_keys: Vec<String>,
     },
     #[cfg(feature = "service")]
     #[command(visible_alias = "s")]
