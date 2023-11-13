@@ -29,13 +29,13 @@ curl -fL "$(curl -fsS https://api.github.com/repos/magiclen/nginx-cache-purge/re
 
 ```
 EXAMPLES:
-nginx-cache-purge p /path/to/cache 1:2 http/blog/            # Purge the cache with the key "http/blog/" in the "cache zone" whose "path" is /path/to/cache, "levels" is 1:2
-nginx-cache-purge p /path/to/cache 1:1:1 'http/blog*'        # Purge the caches with the key which has "http/blog" as its prefix in the "cache zone" whose "path" is /path/to/cache, "levels" is 1:1:1
-nginx-cache-purge p /path/to/cache 2:1 '*/help*'             # Purge the caches with the key which contains the substring "/help" in the "cache zone" whose "path" is /path/to/cache, "levels" is 2:1
-nginx-cache-purge p /path/to/cache 1 '*'                     # Purge all caches in the "cache zone" whose "path" is /path/to/cache, "levels" is 1
-nginx-cache-purge p /path/to/cache 2 '*' -e 'http/static/*'  # Purge all caches except for those whose key starts with "http/static/" in the "cache zone" whose "path" is /path/to/cache, "levels" is 2
-nginx-cache-purge s                                          # Start a server which listens on "/tmp/nginx-cache-purge.sock" to handle purge requests
-nginx-cache-purge s /run/nginx-cache-purge.sock              # Start a server which listens on "/run/nginx-cache-purge.sock" to handle purge requests
+nginx-cache-purge p /path/to/cache 1:2 http/blog/             # Purge the cache with the key "http/blog/" in the "cache zone" whose "path" is /path/to/cache, "levels" is 1:2
+nginx-cache-purge p /path/to/cache 1:1:1 'http/blog*'         # Purge the caches with the key which has "http/blog" as its prefix in the "cache zone" whose "path" is /path/to/cache, "levels" is 1:1:1
+nginx-cache-purge p /path/to/cache 2:1 '*/help*'              # Purge the caches with the key which contains the substring "/help" in the "cache zone" whose "path" is /path/to/cache, "levels" is 2:1
+nginx-cache-purge p /path/to/cache 1 '*'                      # Purge all caches in the "cache zone" whose "path" is /path/to/cache, "levels" is 1
+nginx-cache-purge p /path/to/cache 2 '*' -e 'http/static/*'   # Purge all caches except for those whose key starts with "http/static/" in the "cache zone" whose "path" is /path/to/cache, "levels" is 2
+nginx-cache-purge s                                           # Start a server which listens on "/tmp/nginx-cache-purge.sock" to handle purge requests
+nginx-cache-purge s /run/nginx-cache-purge.sock               # Start a server which listens on "/run/nginx-cache-purge.sock" to handle purge requests
 
 Usage: nginx-cache-purge <COMMAND>
 
