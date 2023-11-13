@@ -13,13 +13,13 @@ const AFTER_HELP: &str = "Enjoy it! https://magiclen.org";
 const APP_ABOUT: &str = concat!(
     "An alternative way to do proxy_cache_purge or fastcgi_cache_purge for Nginx.\n\nEXAMPLES:\n",
     concat_line!(prefix "nginx-cache-purge ",
-        "p /path/to/cache 1:2 http/blog/            # Purge the cache with the key \"http/blog/\" in the \"cache zone\" whose \"path\" is /path/to/cache, \"levels\" is 1:2",
-        "p /path/to/cache 1:1:1 'http/blog*'        # Purge the caches with the key which has \"http/blog\" as its prefix in the \"cache zone\" whose \"path\" is /path/to/cache, \"levels\" is 1:1:1",
-        "p /path/to/cache 2:1 '*/help*'             # Purge the caches with the key which contains the substring \"/help\" in the \"cache zone\" whose \"path\" is /path/to/cache, \"levels\" is 2:1",
-        "p /path/to/cache 1 '*'                     # Purge all caches in the \"cache zone\" whose \"path\" is /path/to/cache, \"levels\" is 1",
-        "p /path/to/cache 2 '*' -e 'http/static/*'  # Purge all caches except for those whose key starts with \"http/static/\" in the \"cache zone\" whose \"path\" is /path/to/cache, \"levels\" is 2",
-        "s                                          # Start a server which listens on \"/tmp/nginx-cache-purge.sock\" to handle purge requests",
-        "s /run/nginx-cache-purge.sock              # Start a server which listens on \"/run/nginx-cache-purge.sock\" to handle purge requests",
+        "p /path/to/cache 1:2 http/blog/             # Purge the cache with the key \"http/blog/\" in the \"cache zone\" whose \"path\" is /path/to/cache, \"levels\" is 1:2",
+        "p /path/to/cache 1:1:1 'http/blog*'         # Purge the caches with the key which has \"http/blog\" as its prefix in the \"cache zone\" whose \"path\" is /path/to/cache, \"levels\" is 1:1:1",
+        "p /path/to/cache 2:1 '*/help*'              # Purge the caches with the key which contains the substring \"/help\" in the \"cache zone\" whose \"path\" is /path/to/cache, \"levels\" is 2:1",
+        "p /path/to/cache 1 '*'                      # Purge all caches in the \"cache zone\" whose \"path\" is /path/to/cache, \"levels\" is 1",
+        "p /path/to/cache 2 '*' -e 'http/static/*'   # Purge all caches except for those whose key starts with \"http/static/\" in the \"cache zone\" whose \"path\" is /path/to/cache, \"levels\" is 2",
+        "s                                           # Start a server which listens on \"/tmp/nginx-cache-purge.sock\" to handle purge requests",
+        "s /run/nginx-cache-purge.sock               # Start a server which listens on \"/run/nginx-cache-purge.sock\" to handle purge requests",
     )
 );
 
