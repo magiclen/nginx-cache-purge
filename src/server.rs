@@ -131,7 +131,7 @@ async fn run(socket_file_path: &Path) -> anyhow::Result<AppResult> {
         uds
     };
 
-    let app: Router = Router::new()
+    let app = Router::new()
         .route("/", any(index_handler))
         .layer(SetResponseHeaderLayer::overriding(
             header::CACHE_CONTROL,
