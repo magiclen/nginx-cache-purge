@@ -101,7 +101,35 @@ async fn index_handler(
     }
 }
 
-async fn run(socket_file_path: &Path) -> anyhow::Result<AppResult> {
+fn create_app() -> Router {
+    Router::new()
+        .route("/", any(index_handler))
+        .layer(SetResponseHeaderLayer::overriding(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("no-store"),
+        ))
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
+                .on_request(DefaultOnRequest::new().level(Level::INFO))
+                .on_response(DefaultOnResponse::new().level(Level::INFO)),
+        )
+}
+
+pub async fn server_main(socket_file_path: &Path) -> anyhow::Result<AppResult> {
+    let mut ansi_color = io::stdout().is_terminal();
+
+    if ansi_color && enable_ansi_support::enable_ansi_support().is_err() {
+        ansi_color = false;
+    }
+
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer().with_ansi(ansi_color))
+        .with(EnvFilter::builder().with_default_directive(Level::INFO.into()).from_env_lossy())
+        .init();
+
+    let app = create_app();
+
     let uds = {
         match fs::metadata(socket_file_path).await {
             Ok(metadata) => {
@@ -131,19 +159,6 @@ async fn run(socket_file_path: &Path) -> anyhow::Result<AppResult> {
         uds
     };
 
-    let app = Router::new()
-        .route("/", any(index_handler))
-        .layer(SetResponseHeaderLayer::overriding(
-            header::CACHE_CONTROL,
-            HeaderValue::from_static("no-store"),
-        ))
-        .layer(
-            TraceLayer::new_for_http()
-                .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
-                .on_request(DefaultOnRequest::new().level(Level::INFO))
-                .on_response(DefaultOnResponse::new().level(Level::INFO)),
-        );
-
     tracing::info!("listening on {socket_file_path:?}");
 
     axum::Server::builder(ServerAccept {
@@ -158,20 +173,4 @@ async fn run(socket_file_path: &Path) -> anyhow::Result<AppResult> {
     //     .await?;
 
     Ok(AppResult::Ok)
-}
-
-#[inline]
-pub async fn server_main(socket_file_path: &Path) -> anyhow::Result<AppResult> {
-    let mut ansi_color = io::stdout().is_terminal();
-
-    if ansi_color && enable_ansi_support::enable_ansi_support().is_err() {
-        ansi_color = false;
-    }
-
-    tracing_subscriber::registry()
-        .with(tracing_subscriber::fmt::layer().with_ansi(ansi_color))
-        .with(EnvFilter::builder().with_default_directive(Level::INFO.into()).from_env_lossy())
-        .init();
-
-    run(socket_file_path).await
 }
