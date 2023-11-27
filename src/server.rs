@@ -139,7 +139,7 @@ pub async fn server_main(socket_file_path: &Path) -> anyhow::Result<AppResult> {
     serve(uds, app).await?;
 
     // let addr = "127.0.0.1:3000";
-    // let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
+    // let listener = tokio::net::TcpListener::bind(addr).await?;
     // tracing::info!("listening on http://{addr}");
     // axum::serve(listener, app).await?;
 
