@@ -1,6 +1,6 @@
 [package]
 name = "nginx-cache-purge"
-version = "0.4.2"
+version = "0.4.3"
 authors = ["Magic Len <len@magiclen.org>"]
 edition = "2021"
 rust-version = "1.70"
@@ -32,15 +32,28 @@ tokio = { version = "1", features = ["full"] }
 async-recursion = "1"
 
 serde = { version = "1", features = ["derive"], optional = true }
-hyper = { version = "0.14", optional = true }
-axum = { version = "0.6", optional = true }
-axum-extra = { version = "0.8", features = ["query"], optional = true }
+hyper = { version = "1", optional = true }
+hyper-util = { version = "0.1", features = ["server-auto"], optional = true }
+tower = { version = "0.4", optional = true }
+axum = { version = "0.7", optional = true }
+axum-extra = { version = "0.9", features = ["query"], optional = true }
 
 tracing = { version = "0.1", optional = true }
 enable-ansi-support = { version = "0.2", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
-tower-http = { version = "0.4", features = ["trace", "set-header"], optional = true }
+tower-http = { version = "0.5", features = ["trace", "set-header"], optional = true }
 
 [features]
 default = ["service"]
-service = ["serde", "hyper", "axum", "axum-extra", "tracing", "enable-ansi-support", "tracing-subscriber", "tower-http"]
+service = [
+    "serde",
+    "hyper",
+    "hyper-util",
+    "tower",
+    "axum",
+    "axum-extra",
+    "tracing",
+    "enable-ansi-support",
+    "tracing-subscriber",
+    "tower-http"
+]

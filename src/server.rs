@@ -4,8 +4,6 @@ use std::{
     io::IsTerminal,
     os::unix::fs::{FileTypeExt, PermissionsExt},
     path::{Path, PathBuf},
-    pin::Pin,
-    task::{ready, Context, Poll},
 };
 
 use anyhow::{anyhow, Context as AnyhowContext};
@@ -13,15 +11,11 @@ use axum::{
     http::{header, HeaderValue, StatusCode},
     response::IntoResponse,
     routing::any,
-    BoxError, Router,
+    Router,
 };
 use axum_extra::extract::Query;
-use hyper::server::accept::Accept;
 use serde::Deserialize;
-use tokio::{
-    fs,
-    net::{UnixListener, UnixStream},
-};
+use tokio::{fs, net::UnixListener};
 use tower_http::{
     set_header::SetResponseHeaderLayer,
     trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer},
@@ -29,25 +23,7 @@ use tower_http::{
 use tracing::Level;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
-use crate::{purge, AppResult};
-
-struct ServerAccept {
-    uds: UnixListener,
-}
-
-impl Accept for ServerAccept {
-    type Conn = UnixStream;
-    type Error = BoxError;
-
-    fn poll_accept(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Option<Result<Self::Conn, Self::Error>>> {
-        let (stream, _addr) = ready!(self.uds.poll_accept(cx))?;
-
-        Poll::Ready(Some(Ok(stream)))
-    }
-}
+use crate::{purge, uds_serve::serve, AppResult};
 
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
@@ -145,17 +121,12 @@ async fn run(socket_file_path: &Path) -> anyhow::Result<AppResult> {
         );
 
     tracing::info!("listening on {socket_file_path:?}");
+    serve(uds, app).await?;
 
-    axum::Server::builder(ServerAccept {
-        uds,
-    })
-    .serve(app.into_make_service())
-    .await?;
-
-    // use std::str::FromStr;
-    // axum::Server::bind(&std::net::SocketAddr::from_str("127.0.0.1:3000").unwrap())
-    //     .serve(app.into_make_service())
-    //     .await?;
+    // let addr = "127.0.0.1:3000";
+    // let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
+    // tracing::info!("listening on http://{addr}");
+    // axum::serve(listener, app).await?;
 
     Ok(AppResult::Ok)
 }

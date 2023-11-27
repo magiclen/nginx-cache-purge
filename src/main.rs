@@ -2,6 +2,7 @@ mod cli;
 mod functions;
 #[cfg(feature = "service")]
 mod server;
+mod uds_serve;
 
 use std::{
     path::{Path, PathBuf},
