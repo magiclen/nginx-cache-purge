@@ -2,6 +2,7 @@ mod cli;
 mod functions;
 #[cfg(feature = "service")]
 mod server;
+#[cfg(feature = "service")]
 mod uds_serve;
 
 use std::{
