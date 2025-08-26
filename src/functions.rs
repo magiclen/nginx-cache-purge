@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     io,
     path::{Path, PathBuf},
     sync::Arc,
@@ -9,8 +10,66 @@ use async_recursion::async_recursion;
 use md5::{Digest, Md5};
 use scanner_rust::{generic_array::typenum::U384, ScannerAscii};
 use tokio::sync::Mutex;
-
+use url::form_urlencoded;
 use crate::AppResult;
+
+
+
+
+
+
+
+// 添加参数规范化函数
+fn normalize_query_string(query: &str) -> String {
+    if query.is_empty() {
+        return String::new();
+    }
+
+    let mut params: BTreeMap<String, Vec<String>> = BTreeMap::new();
+
+    // 解析查询字符串
+    for (key, value) in form_urlencoded::parse(query.as_bytes()) {
+        params.entry(key.into_owned()).or_default().push(value.into_owned());
+    }
+
+    // 去重并排序参数值
+    let mut pairs = Vec::new();
+    for (key, mut values) in params {
+        values.sort_unstable();
+        values.dedup();
+        for value in values {
+            pairs.push((key.clone(), value));
+        }
+    }
+
+    // 重新构建查询字符串
+    form_urlencoded::Serializer::new(String::new())
+        .extend_pairs(pairs)
+        .finish()
+}
+
+// 规范化缓存键
+fn normalize_cache_key(key: &str) -> String {
+    if let Some(pos) = key.find('?') {
+        let base_url = &key[..pos];
+        let query = &key[pos + 1..];
+        
+        let normalized_query = normalize_query_string(query);
+        
+        if normalized_query.is_empty() {
+            base_url.to_string()
+        } else {
+            format!("{}?{}", base_url, normalized_query)
+        }
+    } else {
+        key.to_string()
+    }
+}
+
+
+
+
+
 
 #[inline]
 async fn remove_file<P: AsRef<Path>>(path: P) -> io::Result<()> {
@@ -160,6 +219,9 @@ pub async fn remove_one_cache<P: AsRef<Path>, L: AsRef<str>, K: AsRef<str>, EK: 
     }
 
     let file_path = create_cache_file_path(cache_path, levels, key);
+    
+    // 打印完整的缓存文件路径
+    println!("Cache file path to remove: {:?}", file_path);
 
     match remove_file(&file_path).await {
         Ok(_) => {
@@ -300,7 +362,10 @@ pub async fn remove_caches_via_wildcard<
             exclude_key_keys.push(keys);
         } else {
             let file_path = create_cache_file_path(cache_path.as_path(), &levels, exclude_key);
-
+            
+            // 打印排除的缓存文件路径
+            println!("Exclude cache file path: {:?}", file_path);
+            
             exclude_paths.push(file_path);
         }
     }
@@ -424,6 +489,9 @@ async fn match_key_and_remove_one_cache<P: AsRef<Path>>(
     }
 
     if hit_key(read_key, keys.as_ref()) {
+        // 打印匹配并准备删除的缓存文件路径
+        println!("Matched and removing cache file: {:?}", file_path);
+        
         match remove_file(file_path).await {
             Ok(_) => (),
             Err(error) if error.kind() == io::ErrorKind::NotFound => (),
@@ -504,27 +572,38 @@ fn parse_key<K: AsRef<str>>(key: &K) -> Vec<&[u8]> {
     v
 }
 
+
+
+
 fn create_cache_file_path<P: AsRef<Path>, L: AsRef<[usize]>, K: AsRef<str>>(
     cache_path: P,
     levels: L,
     key: K,
 ) -> PathBuf {
+    let original_key = key.as_ref();
+    println!("Input key for MD5 calculation: {}", original_key);
+    
+    // 应用键值规范化
+    let normalized_key = normalize_cache_key(original_key);
+    println!("Normalized key for MD5 calculation: {}", normalized_key);
+    
     let mut hasher = Md5::new();
-    hasher.update(key.as_ref());
+    hasher.update(&normalized_key); // 使用规范化后的键值
 
-    let key_md5_value = u128::from_be_bytes(hasher.finalize().into());
-    let hashed_key = format!("{:032x}", key_md5_value);
+    let hashed_key = format!("{:x}", hasher.finalize());
+    println!("Calculated MD5: {}", hashed_key);
 
     let mut file_path = cache_path.as_ref().to_path_buf();
-    let mut p = 32; // md5's hex string length
+    let mut p = hashed_key.len();
 
     for level in levels.as_ref() {
         file_path.push(&hashed_key[(p - level)..p]);
-
         p -= level;
     }
 
     file_path.push(hashed_key);
 
+    println!("Generated cache file path: {:?}", file_path);
+    
     file_path
 }

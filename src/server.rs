@@ -8,7 +8,8 @@ use std::{
 
 use anyhow::{anyhow, Context as AnyhowContext};
 use axum::{
-    http::{header, HeaderValue, StatusCode},
+    extract::OriginalUri, // 添加这个导入
+    http::{header, HeaderValue, StatusCode }, // 确保有 Uri
     response::IntoResponse,
     routing::any,
     Router,
@@ -51,7 +52,11 @@ struct Args {
     exclude_keys: Option<OneOrManyString>,
 }
 
+
+
+
 async fn index_handler(
+    OriginalUri(original_uri): OriginalUri,
     Query(Args {
         cache_path,
         levels,
@@ -60,6 +65,26 @@ async fn index_handler(
         exclude_keys,
     }): Query<Args>,
 ) -> impl IntoResponse {
+    // 调试：打印原始 URI
+    println!("Original URI: {}", original_uri);
+
+    // 从原始 URI 中手动提取完整的 key 参数（包含所有重复参数）
+    if let Some(query) = original_uri.query() {
+        println!("Raw query string: {}", query);
+
+        // 手动查找第一个 key 参数的位置
+        if let Some(key_start) = find_first_key_param(query) {
+            // 提取 key 参数的值
+            let key_value = extract_key_value(&query[key_start..]);
+            if let Some(extracted_key) = key_value {
+                key = extracted_key;
+                println!("Manually extracted full key: {}", key);
+            }
+        }
+    }
+
+    println!("Final key to process: {}", key);
+
     if let Some(remove_first) = remove_first {
         if let Some(index) = key.find(remove_first.as_str()) {
             key.replace_range(index..index + remove_first.len(), "");
@@ -76,6 +101,54 @@ async fn index_handler(
         Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, format!("{error:?}")),
     }
 }
+
+
+
+
+// 查找第一个 key 参数的起始位置
+fn find_first_key_param(query: &str) -> Option<usize> {
+    let mut pos = 0;
+    loop {
+        // 查找 "key=" 的位置
+        if let Some(index) = query[pos..].find("key=") {
+            let actual_pos = pos + index;
+            // 确保这是参数的开始（要么在字符串开始，要么前面是 &）
+            if actual_pos == 0 || query.as_bytes()[actual_pos - 1] == b'&' {
+                return Some(actual_pos + 4); // 跳过 "key=" 四个字符
+            }
+            pos = actual_pos + 1;
+        } else {
+            break;
+        }
+    }
+    None
+}
+
+// 从 key= 之后提取完整的值（处理 URL 编码和多个 key 参数的情况）
+fn extract_key_value(query_part: &str) -> Option<String> {
+    // 查找下一个 &key= 或者字符串结尾，作为参数的结束
+    let end_pos = query_part[1..] // 跳过第一个字符避免匹配到自己
+        .find("&key=")
+        .map(|pos| pos + 1) // 调整位置
+        .unwrap_or(query_part.len());
+
+    let encoded_value = &query_part[..end_pos];
+
+    // URL 解码
+    match urlencoding::decode(encoded_value) {
+        Ok(decoded) => Some(decoded.into_owned()),
+        Err(_) => Some(encoded_value.to_string()), // 解码失败则返回原始值
+    }
+}
+
+
+
+
+
+
+
+
+
 
 fn create_app() -> Router {
     Router::new()
