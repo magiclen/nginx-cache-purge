@@ -10,7 +10,7 @@ keywords = ["nginx", "cache", "clear", "purge", "delete"]
 categories = ["command-line-utilities"]
 description = "An alternative way to do `proxy_cache_purge` or `fastcgi_cache_purge` for Nginx."
 license = "MIT"
-include = ["src/**/*", "Cargo.toml", "README.md", "LICENSE"]
+include = ["src/**/*", "Cargo.toml", "Cargo.lock", "README.md", "LICENSE"]
 
 [profile.release]
 lto = true
