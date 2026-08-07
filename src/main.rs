@@ -47,7 +47,7 @@ impl Termination for AppResult {
 #[inline]
 fn purge<P: AsRef<Path>>(
     cache_path: P,
-    levels: &str,
+    levels: &[usize],
     key: &str,
     exclude_keys: &[&str],
 ) -> anyhow::Result<AppResult> {
@@ -71,9 +71,11 @@ fn main() -> anyhow::Result<AppResult> {
         } => {
             functions::set_dry_run(*dry_run);
 
+            let levels = functions::parse_levels(levels)?;
+
             purge(
                 cache_path,
-                levels,
+                &levels,
                 key,
                 &exclude_keys.iter().map(|s| s.as_str()).collect::<Vec<&str>>(),
             )

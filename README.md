@@ -98,6 +98,8 @@ WantedBy=multi-user.target
 
 Each `--zone` takes three values: the name that purge requests refer to, the `path` and the `levels` set by `proxy_cache_path` or `fastcgi_cache_path`. It can be used more than once.
 
+The socket is created with mode `0660`, so Nginx and the service need a shared user or group that can access it. The systemd example above uses `www-data` for both.
+
 Defining a zone is strongly recommended. Without it, anyone who can reach the socket may name **any** directory as the cache path, which combined with the key `*` deletes that whole directory.
 
 Run the following commands,
@@ -131,7 +133,8 @@ http {
 
         location / {
             if ($is_purge) {
-                rewrite ^ /nginx-cache-purge last;
+                # the trailing "?" drops the arguments of the original request, which must not reach the purge service
+                rewrite ^ /nginx-cache-purge? last;
             }
 
             proxy_cache my_cache;
@@ -142,17 +145,28 @@ http {
         location = /nginx-cache-purge {
             internal;
 
-            proxy_set_header X-Cache-Zone my_cache;
+            proxy_set_header X-Cache-Zone   my_cache;
             # $request_uri is still the URI of the original request here
-            proxy_set_header X-Cache-Key  $scheme$request_uri;
+            proxy_set_header X-Cache-Key    $scheme$request_uri;
+            # Nginx passes the headers of the original request on, so every field which is not set above has to be cleared
+            proxy_set_header X-Cache-Path   "";
+            proxy_set_header X-Cache-Levels "";
+            proxy_set_header X-Remove-First "";
+            proxy_set_header X-Exclude-Key  "";
 
-            proxy_pass http://unix:/tmp/nginx-cache-purge.sock;
+            # the trailing ":/" makes Nginx request "/" instead of the URI of this location
+            proxy_pass http://unix:/tmp/nginx-cache-purge.sock:/;
         }
     }
 }
 ```
 
 Passing the key in a header is recommended, because a header value is taken exactly as it is. A key may therefore contain `?`, `&` or `%`, which a query string cannot carry safely.
+
+Two things are worth paying attention to in the configuration above.
+
+1. **Clear the fields you do not set.** Nginx passes the headers of the original request to a proxied server, so a client can send a `X-Cache-Path`, `X-Cache-Levels`, `X-Remove-First` or `X-Exclude-Key` header itself. Setting them to an empty string stops Nginx from passing them on. The same applies to the query: a `rewrite` without a trailing `?` keeps the arguments of the original request.
+2. **Keep the `:/` at the end of `proxy_pass`.** Without it, Nginx would request `/nginx-cache-purge` instead of `/`. This service does accept a purge request at any path, so the `:/` is not strictly required, but it keeps the request tidy.
 
 Remember to add your access authentication mechanisms to prevent strangers from purging your cache. And note that the cache key should not contain `$proxy_host` because it will be empty when the request is in `proxy_pass http://unix:...`.
 
@@ -162,11 +176,13 @@ After finishing the settings:
 * Request `PURGE /path/to/*` to purge all caches from `GET /path/to/**/*`.
 * Request `PURGE /path/to/*/foo/*/bar` to purge caches from `GET /path/to/**/foo/**/bar`.
 
-If the service successfully removes any cache, it will respond the HTTP status code **200**. If no cache needs to be removed, it will respond the HTTP status code **202**. If the request is malformed, it will respond the HTTP status code **400**.
+If the service successfully removes any cache, it will respond the HTTP status code **200**. If no cache needs to be removed, it will respond the HTTP status code **202**. If a request field is missing or invalid, it will respond the HTTP status code **400**. If purging a cache or handling the request fails unexpectedly, it will respond the HTTP status code **500**.
 
 #### Request Fields
 
-Every field can be set either as a request header or as a field in the query of the `/` endpoint URL. A header wins over the query.
+Every field can be set either as a request header or as a field in the query. A header wins over the query. Any request path and any request method are accepted.
+
+A field which your Nginx configuration does not set can be provided by the client, so clear the ones you do not use as shown above.
 
 | Header | Query field | Description |
 | ------ | ----------- | ----------- |
@@ -183,6 +199,15 @@ If you would rather keep the whole request in the URL, note the two rules below.
 
 ```nginx
 location / {
+    # a client can send these headers itself, and a header wins over the query, so clear them all
+    # proxy_set_header is not allowed inside an "if" block, which is why they sit here
+    proxy_set_header X-Cache-Zone   "";
+    proxy_set_header X-Cache-Path   "";
+    proxy_set_header X-Cache-Levels "";
+    proxy_set_header X-Cache-Key    "";
+    proxy_set_header X-Remove-First "";
+    proxy_set_header X-Exclude-Key  "";
+
     if ($is_purge) {
         set $my_cache_key $scheme$request_uri;
 

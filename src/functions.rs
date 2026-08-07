@@ -131,8 +131,18 @@ pub fn remove_all_files_in_directory<P: AsRef<Path>>(path: P) -> anyhow::Result<
 
     let mut entries: Vec<(PathBuf, bool)> = Vec::new();
 
-    for dir_entry in path.read_dir().with_context(|| anyhow!("{path:?}"))? {
-        let dir_entry = dir_entry.with_context(|| anyhow!("{path:?}"))?;
+    let dir_entries = match path.read_dir() {
+        Ok(dir_entries) => dir_entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error).with_context(|| anyhow!("{path:?}")),
+    };
+
+    for dir_entry in dir_entries {
+        let dir_entry = match dir_entry {
+            Ok(dir_entry) => dir_entry,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error).with_context(|| anyhow!("{path:?}")),
+        };
 
         let file_type = match dir_entry.file_type() {
             Ok(file_type) => file_type,
@@ -184,11 +194,10 @@ pub fn remove_all_files_in_directory<P: AsRef<Path>>(path: P) -> anyhow::Result<
 /// Purge a cache with a specific key.
 pub fn remove_one_cache<P: AsRef<Path>>(
     cache_path: P,
-    levels: &str,
+    levels: &[usize],
     key: &str,
     exclude_keys: &[&str],
 ) -> anyhow::Result<AppResult> {
-    let levels = parse_levels(levels)?;
     let number_of_levels = levels.len();
 
     for exclude_key in exclude_keys {
@@ -197,7 +206,7 @@ pub fn remove_one_cache<P: AsRef<Path>>(
         }
     }
 
-    let file_path = create_cache_file_path(cache_path, &levels, key);
+    let file_path = create_cache_file_path(cache_path, levels, key);
 
     match remove_file(&file_path) {
         Ok(_) => {
@@ -215,7 +224,7 @@ pub fn remove_one_cache<P: AsRef<Path>>(
 /// Purge multiple caches via wildcard.
 pub fn remove_caches_via_wildcard<P: AsRef<Path>>(
     cache_path: P,
-    levels: &str,
+    levels: &[usize],
     key: &str,
     exclude_keys: &[&str],
 ) -> anyhow::Result<AppResult> {
@@ -235,7 +244,6 @@ pub fn remove_caches_via_wildcard<P: AsRef<Path>>(
         Err(error) => return Err(error).with_context(|| anyhow!("{cache_path:?}")),
     };
 
-    let levels = parse_levels(levels)?;
     let number_of_levels = levels.len();
 
     let mut exclude_key_segments: Vec<Vec<&[u8]>> = Vec::new();
@@ -251,11 +259,7 @@ pub fn remove_caches_via_wildcard<P: AsRef<Path>>(
 
             exclude_key_segments.push(segments);
         } else {
-            exclude_paths.insert(create_cache_file_path(
-                cache_path.as_path(),
-                &levels,
-                exclude_key,
-            ));
+            exclude_paths.insert(create_cache_file_path(cache_path.as_path(), levels, exclude_key));
         }
     }
 
@@ -379,12 +383,22 @@ fn collect_cache_files(
     directories: &mut Vec<PathBuf>,
     batch: &mut Vec<PathBuf>,
 ) -> anyhow::Result<()> {
-    for dir_entry in path.read_dir().with_context(|| anyhow!("{path:?}"))? {
+    let dir_entries = match path.read_dir() {
+        Ok(dir_entries) => dir_entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error).with_context(|| anyhow!("{path:?}")),
+    };
+
+    for dir_entry in dir_entries {
         if aborted.load(Ordering::Relaxed) {
             return Ok(());
         }
 
-        let dir_entry = dir_entry.with_context(|| anyhow!("{path:?}"))?;
+        let dir_entry = match dir_entry {
+            Ok(dir_entry) => dir_entry,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error).with_context(|| anyhow!("{path:?}")),
+        };
 
         let file_type = match dir_entry.file_type() {
             Ok(file_type) => file_type,
@@ -583,7 +597,7 @@ fn hit_key<RK: AsRef<[u8]>, K: AsRef<[u8]>>(read_key: RK, segments: &[K]) -> boo
     floating || p == read_key.len()
 }
 
-fn parse_levels(levels: &str) -> anyhow::Result<Vec<usize>> {
+pub(crate) fn parse_levels(levels: &str) -> anyhow::Result<Vec<usize>> {
     // nginx allows `levels` to be omitted, which puts every cache file directly in the cache directory
     if levels.is_empty() {
         return Ok(Vec::new());
@@ -826,14 +840,14 @@ mod tests {
 
         write_cache_file(&file_path, key, NGINX_HEADER_SIZE);
 
-        assert_eq!(AppResult::Ok, remove_one_cache(dir.path(), "1:2", key, &[]).unwrap());
+        assert_eq!(AppResult::Ok, remove_one_cache(dir.path(), &[1, 2], key, &[]).unwrap());
         assert!(!file_path.exists());
         // the levels directories should be gone as well
         assert!(!file_path.parent().unwrap().exists());
 
         assert_eq!(
             AppResult::AlreadyPurged(file_path),
-            remove_one_cache(dir.path(), "1:2", key, &[]).unwrap()
+            remove_one_cache(dir.path(), &[1, 2], key, &[]).unwrap()
         );
     }
 
@@ -847,14 +861,14 @@ mod tests {
 
         assert_eq!(
             AppResult::CacheIgnored,
-            remove_one_cache(dir.path(), "1:2", key, &["https/example.org/*"]).unwrap()
+            remove_one_cache(dir.path(), &[1, 2], key, &["https/example.org/*"]).unwrap()
         );
         assert!(file_path.exists());
 
         // an exclude key without a `*` has to match the whole key
         assert_eq!(
             AppResult::Ok,
-            remove_one_cache(dir.path(), "1:2", key, &["https/example.org"]).unwrap()
+            remove_one_cache(dir.path(), &[1, 2], key, &["https/example.org"]).unwrap()
         );
     }
 
@@ -875,7 +889,7 @@ mod tests {
 
         assert_eq!(
             AppResult::Ok,
-            remove_caches_via_wildcard(dir.path(), "1:2", "https/example.org/*", &[]).unwrap()
+            remove_caches_via_wildcard(dir.path(), &[1, 2], "https/example.org/*", &[]).unwrap()
         );
 
         assert!(!create_cache_file_path(dir.path(), &levels, keys[0]).exists());
@@ -900,7 +914,7 @@ mod tests {
 
         assert_eq!(
             AppResult::Ok,
-            remove_caches_via_wildcard(dir.path(), "1:2", "*", &[
+            remove_caches_via_wildcard(dir.path(), &[1, 2], "*", &[
                 "https/example.org/image/*",
                 "https/example.org/c"
             ])
@@ -929,7 +943,7 @@ mod tests {
 
         assert_eq!(
             AppResult::Ok,
-            remove_caches_via_wildcard(dir.path(), "1:2", "https/*", &[]).unwrap()
+            remove_caches_via_wildcard(dir.path(), &[1, 2], "https/*", &[]).unwrap()
         );
 
         assert_eq!(0, dir.path().read_dir().unwrap().count());
@@ -947,7 +961,7 @@ mod tests {
 
         assert_eq!(
             AppResult::Ok,
-            remove_caches_via_wildcard(dir.path(), "", "https/example.org/*", &[]).unwrap()
+            remove_caches_via_wildcard(dir.path(), &[], "https/example.org/*", &[]).unwrap()
         );
 
         assert!(!create_cache_file_path(dir.path(), &[], keys[0]).exists());
@@ -963,7 +977,7 @@ mod tests {
 
         assert_eq!(
             AppResult::AlreadyPurgedWildcard,
-            remove_caches_via_wildcard(dir.path(), "1:2", "https/example.org/*", &[]).unwrap()
+            remove_caches_via_wildcard(dir.path(), &[1, 2], "https/example.org/*", &[]).unwrap()
         );
     }
 
@@ -982,12 +996,22 @@ mod tests {
             );
         }
 
-        assert_eq!(AppResult::Ok, remove_caches_via_wildcard(dir.path(), "1:2", "*", &[]).unwrap());
+        assert_eq!(
+            AppResult::Ok,
+            remove_caches_via_wildcard(dir.path(), &[1, 2], "*", &[]).unwrap()
+        );
         assert_eq!(0, dir.path().read_dir().unwrap().count());
 
         assert_eq!(
             AppResult::AlreadyPurgedWildcard,
-            remove_caches_via_wildcard(dir.path(), "1:2", "*", &[]).unwrap()
+            remove_caches_via_wildcard(dir.path(), &[1, 2], "*", &[]).unwrap()
         );
+    }
+
+    #[test]
+    fn remove_all_files_in_directory_ignores_a_missing_directory() {
+        let dir = tempfile::tempdir().unwrap();
+
+        assert!(!remove_all_files_in_directory(dir.path().join("missing")).unwrap());
     }
 }

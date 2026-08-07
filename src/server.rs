@@ -25,7 +25,7 @@ use tower_http::{
 use tracing::Level;
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
-use crate::{AppResult, purge, uds_serve::serve};
+use crate::{AppResult, functions::parse_levels, purge, uds_serve::serve};
 
 const HEADER_ZONE: &str = "x-cache-zone";
 const HEADER_CACHE_PATH: &str = "x-cache-path";
@@ -37,7 +37,7 @@ const HEADER_EXCLUDE_KEY: &str = "x-exclude-key";
 #[derive(Debug)]
 pub struct Zone {
     cache_path: PathBuf,
-    levels:     String,
+    levels:     Vec<usize>,
 }
 
 pub type Zones = HashMap<String, Zone>;
@@ -55,9 +55,12 @@ pub fn parse_zones(zones: &[String]) -> anyhow::Result<Zones> {
             return Err(anyhow!("The cache zone {name:?} is defined more than once."));
         }
 
+        let levels = parse_levels(levels)
+            .with_context(|| anyhow!("The cache zone {name:?} has invalid levels."))?;
+
         result.insert(name.clone(), Zone {
             cache_path: PathBuf::from(cache_path),
-            levels:     levels.clone(),
+            levels,
         });
     }
 
@@ -155,7 +158,7 @@ fn apply_headers(args: &mut Args, headers: &HeaderMap) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn resolve_target(zones: &Zones, args: &Args) -> anyhow::Result<(PathBuf, String)> {
+fn resolve_target(zones: &Zones, args: &Args) -> anyhow::Result<(PathBuf, Vec<usize>)> {
     if zones.is_empty() {
         if args.zone.is_some() {
             return Err(anyhow!("This server has no cache zone defined."));
@@ -164,7 +167,10 @@ fn resolve_target(zones: &Zones, args: &Args) -> anyhow::Result<(PathBuf, String
         let cache_path =
             args.cache_path.as_deref().ok_or_else(|| anyhow!("The cache_path is not assigned."))?;
 
-        Ok((PathBuf::from(cache_path), args.levels.clone().unwrap_or_default()))
+        let levels = parse_levels(args.levels.as_deref().unwrap_or(""))
+            .with_context(|| anyhow!("The levels field is invalid."))?;
+
+        Ok((PathBuf::from(cache_path), levels))
     } else {
         if args.cache_path.is_some() || args.levels.is_some() {
             return Err(anyhow!(
@@ -212,21 +218,32 @@ async fn index_handler(
     let result = tokio::task::spawn_blocking(move || {
         let exclude_keys: Vec<&str> = exclude_keys.iter().map(|s| s.as_str()).collect();
 
-        purge(cache_path, levels.as_str(), key.as_str(), &exclude_keys)
+        purge(cache_path, levels.as_slice(), key.as_str(), &exclude_keys)
     })
     .await;
 
     match result {
         Ok(Ok(AppResult::Ok)) => (StatusCode::OK, "Ok.".to_string()),
         Ok(Ok(_)) => (StatusCode::ACCEPTED, "No cache needs to be purged.".to_string()),
-        Ok(Err(error)) => (StatusCode::INTERNAL_SERVER_ERROR, format!("{error:?}")),
-        Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, format!("{error:?}")),
+        Ok(Err(error)) => {
+            tracing::error!("failed to purge: {error:?}");
+
+            // only the error chain is sent back, since the debug form may carry a backtrace
+            (StatusCode::INTERNAL_SERVER_ERROR, format!("{error:#}"))
+        },
+        Err(error) => {
+            tracing::error!("failed to join the purging task: {error:?}");
+
+            (StatusCode::INTERNAL_SERVER_ERROR, format!("{error}"))
+        },
     }
 }
 
 fn create_app(zones: Zones) -> Router {
     Router::new()
         .route("/", any(index_handler))
+        // `proxy_pass` without a URI part keeps the URI of the original request, so a purge request may arrive at any path
+        .fallback(index_handler)
         .layer(SetResponseHeaderLayer::overriding(
             header::CACHE_CONTROL,
             HeaderValue::from_static("no-store"),
@@ -259,6 +276,25 @@ pub async fn server_main(socket_file_path: &Path, zones: Zones) -> anyhow::Resul
         );
     }
 
+    for (name, zone) in zones.iter() {
+        let cache_path = zone.cache_path.as_path();
+
+        // a cache directory is created by nginx, which may not have happened yet, so this is only a hint
+        match fs::metadata(cache_path).await {
+            Ok(metadata) if metadata.is_dir() => (),
+            Ok(_) => {
+                tracing::warn!(
+                    "the cache path of the zone {name:?} is not a directory: {cache_path:?}"
+                )
+            },
+            Err(error) => {
+                tracing::warn!(
+                    "cannot read the cache path of the zone {name:?}: {cache_path:?}: {error}"
+                )
+            },
+        }
+    }
+
     let app = create_app(zones);
 
     let uds = {
@@ -283,7 +319,8 @@ pub async fn server_main(socket_file_path: &Path, zones: Zones) -> anyhow::Resul
         let uds = UnixListener::bind(socket_file_path)
             .with_context(|| anyhow!("{socket_file_path:?}"))?;
 
-        fs::set_permissions(socket_file_path, Permissions::from_mode(0o777))
+        // between the binding and this call the mode comes from the umask, which usually denies the write permission a connection needs
+        fs::set_permissions(socket_file_path, Permissions::from_mode(0o660))
             .await
             .with_context(|| anyhow!("{socket_file_path:?}"))?;
 
@@ -292,6 +329,15 @@ pub async fn server_main(socket_file_path: &Path, zones: Zones) -> anyhow::Resul
 
     tracing::info!("listening on {socket_file_path:?}");
     serve(uds, app).await?;
+
+    tracing::info!("shutting down");
+
+    // dropping the listener does not remove the socket file
+    match fs::remove_file(socket_file_path).await {
+        Ok(_) => (),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => (),
+        Err(error) => tracing::warn!("cannot remove {socket_file_path:?}: {error}"),
+    }
 
     Ok(AppResult::Ok)
 }
@@ -367,11 +413,31 @@ mod tests {
         };
 
         assert_eq!(
-            (PathBuf::from("/tmp/cache"), "1:2".to_string()),
+            (PathBuf::from("/tmp/cache"), vec![1, 2]),
             resolve_target(&zones, &args).unwrap()
         );
 
         assert!(resolve_target(&zones, &Args::default()).is_err());
+    }
+
+    #[test]
+    fn parse_zones_rejects_invalid_levels() {
+        assert!(
+            parse_zones(&["my_cache".to_string(), "/tmp/cache".to_string(), "3".to_string()])
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn resolve_target_rejects_invalid_request_levels() {
+        let zones = Zones::new();
+        let args = Args {
+            cache_path: Some("/tmp/cache".to_string()),
+            levels: Some("3".to_string()),
+            ..Args::default()
+        };
+
+        assert!(resolve_target(&zones, &args).is_err());
     }
 
     #[test]
@@ -386,7 +452,7 @@ mod tests {
         };
 
         assert_eq!(
-            (PathBuf::from("/tmp/cache"), "1:2".to_string()),
+            (PathBuf::from("/tmp/cache"), vec![1, 2]),
             resolve_target(&zones, &args).unwrap()
         );
 
