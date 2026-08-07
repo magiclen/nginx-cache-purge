@@ -13,21 +13,13 @@ use std::{
 use cli::*;
 #[cfg(feature = "service")]
 use server::*;
-use tokio::runtime;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum AppResult {
     Ok,
     AlreadyPurged(PathBuf),
     CacheIgnored,
     AlreadyPurgedWildcard,
-}
-
-impl From<()> for AppResult {
-    #[inline]
-    fn from(_: ()) -> Self {
-        AppResult::Ok
-    }
 }
 
 impl Termination for AppResult {
@@ -53,48 +45,50 @@ impl Termination for AppResult {
 }
 
 #[inline]
-async fn purge<P: AsRef<Path>, L: AsRef<str>, K: AsRef<str>, EK: AsRef<str>>(
+fn purge<P: AsRef<Path>>(
     cache_path: P,
-    levels: L,
-    key: K,
-    exclude_keys: Vec<EK>,
+    levels: &str,
+    key: &str,
+    exclude_keys: &[&str],
 ) -> anyhow::Result<AppResult> {
-    let cache_path = cache_path.as_ref();
-    let levels = levels.as_ref();
-    let key = key.as_ref();
-
     if key.contains('*') {
-        functions::remove_caches_via_wildcard(cache_path, levels, key, exclude_keys).await
+        functions::remove_caches_via_wildcard(cache_path, levels, key, exclude_keys)
     } else {
-        functions::remove_one_cache(cache_path, levels, key, exclude_keys).await
+        functions::remove_one_cache(cache_path, levels, key, exclude_keys)
     }
 }
 
 fn main() -> anyhow::Result<AppResult> {
     let args = get_args();
 
-    let runtime = runtime::Runtime::new()?;
+    match &args.command {
+        CLICommands::Purge {
+            cache_path,
+            levels,
+            key,
+            exclude_keys,
+            dry_run,
+        } => {
+            functions::set_dry_run(*dry_run);
 
-    runtime.block_on(async move {
-        match &args.command {
-            CLICommands::Purge {
+            purge(
                 cache_path,
                 levels,
                 key,
-                exclude_keys,
-            } => {
-                purge(
-                    cache_path,
-                    levels,
-                    key,
-                    exclude_keys.iter().map(|s| s.as_str()).collect::<Vec<&str>>(),
-                )
-                .await
-            },
-            #[cfg(feature = "service")]
-            CLICommands::Start {
-                socket_file_path,
-            } => server_main(socket_file_path.as_path()).await,
-        }
-    })
+                &exclude_keys.iter().map(|s| s.as_str()).collect::<Vec<&str>>(),
+            )
+        },
+        #[cfg(feature = "service")]
+        CLICommands::Start {
+            socket_file_path,
+            zones,
+            dry_run,
+        } => {
+            functions::set_dry_run(*dry_run);
+
+            let zones = parse_zones(zones)?;
+
+            tokio::runtime::Runtime::new()?.block_on(server_main(socket_file_path.as_path(), zones))
+        },
+    }
 }
