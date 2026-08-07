@@ -1,4 +1,4 @@
-use axum::{extract::Request, Router};
+use axum::{Router, extract::Request};
 use hyper::body::Incoming;
 use hyper_util::{
     rt::{TokioExecutor, TokioIo},

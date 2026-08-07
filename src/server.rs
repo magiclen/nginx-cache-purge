@@ -6,12 +6,12 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::{anyhow, Context as AnyhowContext};
+use anyhow::{Context as AnyhowContext, anyhow};
 use axum::{
-    http::{header, HeaderValue, StatusCode},
+    Router,
+    http::{HeaderValue, StatusCode, header},
     response::IntoResponse,
     routing::any,
-    Router,
 };
 use axum_extra::extract::Query;
 use serde::Deserialize;
@@ -21,9 +21,9 @@ use tower_http::{
     trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer},
 };
 use tracing::Level;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
-use crate::{purge, uds_serve::serve, AppResult};
+use crate::{AppResult, purge, uds_serve::serve};
 
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
@@ -60,10 +60,10 @@ async fn index_handler(
         exclude_keys,
     }): Query<Args>,
 ) -> impl IntoResponse {
-    if let Some(remove_first) = remove_first {
-        if let Some(index) = key.find(remove_first.as_str()) {
-            key.replace_range(index..index + remove_first.len(), "");
-        }
+    if let Some(remove_first) = remove_first
+        && let Some(index) = key.find(remove_first.as_str())
+    {
+        key.replace_range(index..index + remove_first.len(), "");
     }
 
     match purge(cache_path, levels, key, exclude_keys.map(|e| e.into()).unwrap_or_else(Vec::new))

@@ -2,8 +2,8 @@
 name = "nginx-cache-purge"
 version = "0.4.4"
 authors = ["Magic Len <len@magiclen.org>"]
-edition = "2021"
-rust-version = "1.70"
+edition = "2024"
+rust-version = "1.89"
 repository = "https://github.com/magiclen/nginx-cache-purge"
 homepage = "https://magiclen.org/nginx-cache-purge"
 keywords = ["nginx", "cache", "clear", "purge", "delete"]
@@ -21,39 +21,39 @@ strip = true
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 concat-with = "0.2"
-terminal_size = "0.3"
+terminal_size = "0.4"
 
-anyhow = "1"
+anyhow = "1.0.12"
 
-md-5 = "0.10"
-scanner-rust = "2"
+md-5 = "0.11"
+scanner-rust = "3"
 
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1.44", features = ["full"] }
 async-recursion = "1"
 
-serde = { version = "1", features = ["derive"], optional = true }
-hyper = { version = "1", optional = true }
-hyper-util = { version = "0.1", features = ["server-auto"], optional = true }
-tower = { version = "0.4", optional = true }
-axum = { version = "0.7", optional = true }
-axum-extra = { version = "0.9", features = ["query"], optional = true }
+serde = { version = "1.0.221", features = ["derive"], optional = true }
+hyper = { version = "1.1", optional = true }
+hyper-util = { version = "0.1.3", features = ["server-auto"], optional = true }
+tower = { version = "0.5.2", optional = true }
+axum = { version = "0.8.4", optional = true }
+axum-extra = { version = "0.12", features = ["query"], optional = true }
 
-tracing = { version = "0.1", optional = true }
-enable-ansi-support = { version = "0.2", optional = true }
-tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
-tower-http = { version = "0.5", features = ["trace", "set-header"], optional = true }
+tracing = { version = "0.1.37", optional = true }
+enable-ansi-support = { version = "0.3", optional = true }
+tracing-subscriber = { version = "0.3.10", features = ["env-filter"], optional = true }
+tower-http = { version = "0.7", features = ["trace", "set-header"], optional = true }
 
 [features]
 default = ["service"]
 service = [
-    "serde",
-    "hyper",
-    "hyper-util",
-    "tower",
-    "axum",
-    "axum-extra",
-    "tracing",
-    "enable-ansi-support",
-    "tracing-subscriber",
-    "tower-http"
+    "dep:serde",
+    "dep:hyper",
+    "dep:hyper-util",
+    "dep:tower",
+    "dep:axum",
+    "dep:axum-extra",
+    "dep:tracing",
+    "dep:enable-ansi-support",
+    "dep:tracing-subscriber",
+    "dep:tower-http"
 ]

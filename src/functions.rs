@@ -4,10 +4,10 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use async_recursion::async_recursion;
 use md5::{Digest, Md5};
-use scanner_rust::{generic_array::typenum::U384, ScannerAscii};
+use scanner_rust::ScannerAscii;
 use tokio::sync::Mutex;
 
 use crate::AppResult;
@@ -51,7 +51,7 @@ async fn remove_dir<P: AsRef<Path>>(path: P) -> io::Result<()> {
                 // check if the error is caused by directory is not empty
                 // TODO we should just use `io::ErrorKind::DirectoryNotEmpty` in the future
                 return if error.kind().to_string() == "directory not empty" {
-                    Err(io::Error::new(io::ErrorKind::Other, error))
+                    Err(io::Error::other(error))
                 } else {
                     Err(error)
                 };
@@ -313,11 +313,7 @@ pub async fn remove_caches_via_wildcard<
         && exclude_paths.is_empty()
     {
         return remove_all_files_in_directory(cache_path).await.map(|modified| {
-            if modified {
-                AppResult::Ok
-            } else {
-                AppResult::AlreadyPurgedWildcard
-            }
+            if modified { AppResult::Ok } else { AppResult::AlreadyPurgedWildcard }
         });
     }
 
@@ -400,7 +396,7 @@ async fn match_key_and_remove_one_cache<P: AsRef<Path>>(
 ) -> anyhow::Result<bool> {
     let file_path = file_path.as_ref();
 
-    let mut sc: ScannerAscii<_, U384> =
+    let mut sc: ScannerAscii<_, 384> =
         ScannerAscii::scan_path2(file_path).with_context(|| anyhow!("{file_path:?}"))?;
 
     // skip the header
