@@ -236,13 +236,6 @@ We can choose to disable the default features to obtain a much smaller executabl
 cargo install nginx-cache-purge --no-default-features
 ```
 
-## Upgrading from 0.4
-
-* A query field is no longer percent-decoded, and `key` now runs to the end of the query. If your `rewrite` puts `key` in the middle, move it to the end, and append a `?` to the replacement string so that Nginx does not add the arguments of the original request again.
-* A key pattern without a trailing `*` now has to match the whole cache key. `*/help` used to behave like `*/help*`.
-* A debug build no longer refuses to remove anything. Use `--dry-run` instead.
-* `-e` now takes one key at a time, so use it once per key.
-
 ## License
 
 [MIT](LICENSE)
