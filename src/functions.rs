@@ -7,7 +7,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Mutex,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicBool, Ordering},
         mpsc::{self, SyncSender},
     },
     thread,
@@ -129,62 +129,106 @@ fn remove_empty_ancestors<P: AsRef<Path>>(path: P, relative_degree: usize) -> an
 pub fn remove_all_files_in_directory<P: AsRef<Path>>(path: P) -> anyhow::Result<bool> {
     let path = path.as_ref();
 
-    let mut entries: Vec<(PathBuf, bool)> = Vec::new();
-
     let dir_entries = match path.read_dir() {
         Ok(dir_entries) => dir_entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
         Err(error) => return Err(error).with_context(|| anyhow!("{path:?}")),
     };
 
-    for dir_entry in dir_entries {
-        let dir_entry = match dir_entry {
-            Ok(dir_entry) => dir_entry,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-            Err(error) => return Err(error).with_context(|| anyhow!("{path:?}")),
-        };
-
-        let file_type = match dir_entry.file_type() {
-            Ok(file_type) => file_type,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-            Err(error) => return Err(error).with_context(|| anyhow!("{dir_entry:?}")),
-        };
-
-        entries.push((dir_entry.path(), file_type.is_dir()));
-    }
-
-    if entries.is_empty() {
-        return Ok(false);
-    }
-
-    let next = AtomicUsize::new(0);
+    let workers = worker_count();
+    let (sender, receiver) = mpsc::sync_channel::<Vec<(PathBuf, bool)>>(workers * 2);
+    let receiver = Mutex::new(receiver);
     let removed = AtomicBool::new(false);
+    let aborted = AtomicBool::new(false);
     let first_error: Mutex<Option<anyhow::Error>> = Mutex::new(None);
 
-    thread::scope(|scope| {
-        for _ in 0..worker_count().min(entries.len()) {
+    let walk_result = thread::scope(|scope| {
+        for _ in 0..workers {
             scope.spawn(|| {
-                while let Some((path, is_dir)) = entries.get(next.fetch_add(1, Ordering::Relaxed)) {
-                    let result = if *is_dir { remove_dir_all(path) } else { remove_file(path) };
+                loop {
+                    let batch = {
+                        let receiver = receiver.lock().unwrap();
+                        match receiver.recv() {
+                            Ok(batch) => batch,
+                            Err(_) => break,
+                        }
+                    };
 
-                    match result {
-                        Ok(_) => removed.store(true, Ordering::Relaxed),
-                        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                            removed.store(true, Ordering::Relaxed);
-                        },
-                        Err(error) => {
-                            first_error.lock().unwrap().get_or_insert_with(|| {
-                                anyhow::Error::new(error).context(anyhow!("{path:?}"))
-                            });
+                    // Keep draining the channel after a failure so the producer can finish.
+                    if aborted.load(Ordering::Relaxed) {
+                        continue;
+                    }
 
-                            break;
-                        },
+                    for (path, is_dir) in batch {
+                        let result =
+                            if is_dir { remove_dir_all(&path) } else { remove_file(&path) };
+                        match result {
+                            Ok(_) => removed.store(true, Ordering::Relaxed),
+                            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                                removed.store(true, Ordering::Relaxed);
+                            },
+                            Err(error) => {
+                                aborted.store(true, Ordering::Relaxed);
+                                first_error.lock().unwrap().get_or_insert_with(|| {
+                                    anyhow::Error::new(error).context(anyhow!("{path:?}"))
+                                });
+                                break;
+                            },
+                        }
                     }
                 }
             });
         }
+
+        let result = (|| -> anyhow::Result<()> {
+            let mut batch = Vec::with_capacity(BATCH_SIZE);
+            for dir_entry in dir_entries {
+                if aborted.load(Ordering::Relaxed) {
+                    break;
+                }
+
+                let dir_entry = match dir_entry {
+                    Ok(entry) => entry,
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                    Err(error) => return Err(error).with_context(|| anyhow!("{path:?}")),
+                };
+                let file_type = match dir_entry.file_type() {
+                    Ok(file_type) => file_type,
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                    Err(error) => return Err(error).with_context(|| anyhow!("{dir_entry:?}")),
+                };
+                if file_type.is_dir() {
+                    if !batch.is_empty() {
+                        let batch = mem::replace(&mut batch, Vec::with_capacity(BATCH_SIZE));
+                        if sender.send(batch).is_err() {
+                            return Ok(());
+                        }
+                    }
+                    // Each directory can contain many files, so let workers handle them separately.
+                    if sender.send(vec![(dir_entry.path(), true)]).is_err() {
+                        return Ok(());
+                    }
+                    continue;
+                }
+                batch.push((dir_entry.path(), false));
+                if batch.len() == BATCH_SIZE {
+                    let batch = mem::replace(&mut batch, Vec::with_capacity(BATCH_SIZE));
+                    if sender.send(batch).is_err() {
+                        return Ok(());
+                    }
+                }
+            }
+            if !batch.is_empty() {
+                let _ = sender.send(batch);
+            }
+            Ok(())
+        })();
+
+        drop(sender);
+        result
     });
 
+    walk_result?;
     match first_error.into_inner().unwrap() {
         Some(error) => Err(error),
         None => Ok(removed.load(Ordering::Relaxed)),
@@ -248,6 +292,7 @@ pub fn remove_caches_via_wildcard<P: AsRef<Path>>(
 
     let mut exclude_key_segments: Vec<Vec<&[u8]>> = Vec::new();
     let mut exclude_paths: HashSet<PathBuf> = HashSet::new();
+    let mut exact_exclude_keys: HashSet<&[u8]> = HashSet::new();
 
     for exclude_key in exclude_keys {
         if exclude_key.contains('*') {
@@ -260,6 +305,7 @@ pub fn remove_caches_via_wildcard<P: AsRef<Path>>(
             exclude_key_segments.push(segments);
         } else {
             exclude_paths.insert(create_cache_file_path(cache_path.as_path(), levels, exclude_key));
+            exact_exclude_keys.insert(exclude_key.as_bytes());
         }
     }
 
@@ -307,6 +353,7 @@ pub fn remove_caches_via_wildcard<P: AsRef<Path>>(
                         match match_key_and_remove_one_cache(
                             &segments,
                             &exclude_key_segments,
+                            &exact_exclude_keys,
                             &file_path,
                             &mut buffer,
                         ) {
@@ -448,6 +495,7 @@ fn collect_cache_files(
 fn match_key_and_remove_one_cache(
     segments: &[&[u8]],
     exclude_key_segments: &[Vec<&[u8]>],
+    exact_exclude_keys: &HashSet<&[u8]>,
     file_path: &Path,
     buffer: &mut Vec<u8>,
 ) -> anyhow::Result<bool> {
@@ -461,6 +509,11 @@ fn match_key_and_remove_one_cache(
     };
 
     let read_key = &buffer[key];
+
+    // Vary variants keep the original key but use a different file name.
+    if exact_exclude_keys.contains(read_key) {
+        return Ok(false);
+    }
 
     for exclude_key_segments in exclude_key_segments {
         if hit_key(read_key, exclude_key_segments) {
@@ -996,6 +1049,14 @@ mod tests {
             );
         }
 
+        for i in 0..(BATCH_SIZE * 3 + 1) {
+            write_cache_file(
+                &dir.path().join(format!("flat-{i}")),
+                "https/example.org/flat",
+                NGINX_HEADER_SIZE,
+            );
+        }
+
         assert_eq!(
             AppResult::Ok,
             remove_caches_via_wildcard(dir.path(), &[1, 2], "*", &[]).unwrap()
@@ -1006,6 +1067,75 @@ mod tests {
             AppResult::AlreadyPurgedWildcard,
             remove_caches_via_wildcard(dir.path(), &[1, 2], "*", &[]).unwrap()
         );
+    }
+
+    #[test]
+    fn exact_exclusions_keep_vary_variants() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = "https/example.org/a";
+        let main = create_cache_file_path(dir.path(), &[1, 2], key);
+        let variant = dir.path().join("6/98/93d654bd5fa67d875fa79e65ca871986");
+        let other = create_cache_file_path(dir.path(), &[1, 2], "https/example.org/b");
+        for path in [&main, &variant] {
+            write_cache_file(path, key, NGINX_HEADER_SIZE);
+        }
+        write_cache_file(&other, "https/example.org/b", NGINX_HEADER_SIZE);
+
+        assert_eq!(
+            AppResult::Ok,
+            remove_caches_via_wildcard(dir.path(), &[1, 2], "*", &[key]).unwrap()
+        );
+        assert!(main.exists());
+        assert!(variant.exists());
+        assert!(!other.exists());
+    }
+
+    #[test]
+    fn scan_removes_only_the_exact_key_and_its_variants() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = "https/example.org/a";
+        let main = create_cache_file_path(dir.path(), &[1, 2], key);
+        let variant = dir.path().join("6/98/93d654bd5fa67d875fa79e65ca871986");
+        let other = create_cache_file_path(dir.path(), &[1, 2], "https/example.org/ab");
+        for path in [&main, &variant] {
+            write_cache_file(path, key, NGINX_HEADER_SIZE);
+        }
+        write_cache_file(&other, "https/example.org/ab", NGINX_HEADER_SIZE);
+        let options = crate::cli::PurgeOptions {
+            scan: true, no_wildcard: true
+        };
+
+        assert_eq!(
+            AppResult::AlreadyPurgedWildcard,
+            crate::purge(dir.path(), &[1, 2], key, &[key], options).unwrap()
+        );
+        assert!(main.exists());
+        assert!(variant.exists());
+        assert_eq!(AppResult::Ok, crate::purge(dir.path(), &[1, 2], key, &[], options).unwrap());
+        assert!(!main.exists());
+        assert!(!variant.exists());
+        assert!(other.exists());
+    }
+
+    #[test]
+    fn wildcard_policy_keeps_existing_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = "https/example.org/a";
+        let path = create_cache_file_path(dir.path(), &[], key);
+        write_cache_file(&path, key, NGINX_HEADER_SIZE);
+        let options = crate::cli::PurgeOptions {
+            no_wildcard: true, scan: false
+        };
+
+        assert!(crate::purge(dir.path(), &[], "*", &[], options).is_err());
+        assert!(path.exists());
+        assert_eq!(AppResult::Ok, crate::purge(dir.path(), &[], key, &[], options).unwrap());
+        write_cache_file(&path, key, NGINX_HEADER_SIZE);
+        assert_eq!(
+            AppResult::Ok,
+            crate::purge(dir.path(), &[], "*", &[], Default::default()).unwrap()
+        );
+        assert!(!path.exists());
     }
 
     #[test]

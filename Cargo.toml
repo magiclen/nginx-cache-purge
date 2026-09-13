@@ -27,9 +27,9 @@ anyhow = "1.0.12"
 
 md-5 = "0.11"
 
-tokio = { version = "1.44", features = ["rt-multi-thread", "net", "fs", "io-util", "signal", "time"], optional = true }
+tokio = { version = "1.44", features = ["rt-multi-thread", "net", "fs", "io-util", "signal", "time", "sync"], optional = true }
 hyper = { version = "1.1", optional = true }
-hyper-util = { version = "0.1.3", features = ["server-auto"], optional = true }
+hyper-util = { version = "0.1.3", features = ["server-auto", "server-graceful"], optional = true }
 tower = { version = "0.5.2", optional = true }
 axum = { version = "0.8.4", optional = true }
 

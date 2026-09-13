@@ -20,10 +20,14 @@ const APP_ABOUT: &str = concat!(
         "p /path/to/cache 1 '*'                      # Purge all caches in the \"cache zone\" whose \"path\" is /path/to/cache, \"levels\" is 1",
         "p /path/to/cache 2 '*' -e 'http/static/*'   # Purge all caches except for those whose key starts with \"http/static/\" in the \"cache zone\" whose \"path\" is /path/to/cache, \"levels\" is 2",
         "p /path/to/cache 1:2 '*' --dry-run          # List the caches that would be purged without removing anything",
-        "s                                           # Start a server which listens on \"/tmp/nginx-cache-purge.sock\" to handle purge requests",
-        "s /run/nginx-cache-purge.sock               # Start a server which listens on \"/run/nginx-cache-purge.sock\" to handle purge requests",
-        "s --zone my_cache /path/to/cache 1:2        # Start a server which only accepts purge requests for the \"my_cache\" zone",
     )
+);
+
+#[cfg(feature = "service")]
+const SERVICE_EXAMPLES: &str = concat_line!(prefix "nginx-cache-purge ",
+    "s                                           # Start a server which listens on \"/tmp/nginx-cache-purge.sock\" to handle purge requests",
+    "s /run/nginx-cache-purge.sock               # Start a server which listens on \"/run/nginx-cache-purge.sock\" to handle purge requests",
+    "s --zone my_cache /path/to/cache 1:2        # Start a server which only accepts purge requests for the \"my_cache\" zone",
 );
 
 #[derive(Debug, Parser)]
@@ -61,6 +65,9 @@ pub enum CLICommands {
         #[arg(long)]
         #[arg(help = "Show what would be purged without removing anything")]
         dry_run: bool,
+
+        #[command(flatten)]
+        options: PurgeOptions,
     },
     #[cfg(feature = "service")]
     #[command(visible_alias = "s")]
@@ -78,16 +85,61 @@ pub enum CLICommands {
                       to name a cache path themselves")]
         zones: Vec<String>,
 
+        #[arg(long, value_parser = parse_max_concurrent_purges)]
+        #[arg(help = "Limit the number of purges running at once; other requests wait")]
+        max_concurrent_purges: Option<usize>,
+
         #[arg(long)]
         #[arg(help = "Show what would be purged without removing anything")]
         dry_run: bool,
+
+        #[command(flatten)]
+        options: PurgeOptions,
     },
+}
+
+#[derive(Debug, Default, Clone, Copy, clap::Args)]
+pub struct PurgeOptions {
+    #[arg(long)]
+    #[arg(help = "Reject purge keys containing *, including during a dry run")]
+    pub no_wildcard: bool,
+
+    #[arg(long)]
+    #[arg(help = "Scan cache files even for an exact key to remove all Vary variants")]
+    pub scan: bool,
+}
+
+impl PurgeOptions {
+    pub fn validate_key(&self, key: &str) -> anyhow::Result<()> {
+        if self.no_wildcard && key.contains('*') {
+            return Err(anyhow::anyhow!("Wildcard purge keys are disabled by --no-wildcard."));
+        }
+
+        Ok(())
+    }
+}
+
+#[cfg(feature = "service")]
+fn parse_max_concurrent_purges(value: &str) -> Result<usize, String> {
+    let count = value.parse::<usize>().map_err(|error| error.to_string())?;
+
+    if !(1..=tokio::sync::Semaphore::MAX_PERMITS).contains(&count) {
+        return Err(format!(
+            "The limit must be between 1 and {}.",
+            tokio::sync::Semaphore::MAX_PERMITS
+        ));
+    }
+
+    Ok(count)
 }
 
 pub fn get_args() -> CLIArgs {
     let args = CLIArgs::command();
 
     let about = format!("{APP_NAME} {CARGO_PKG_VERSION}\n{CARGO_PKG_AUTHORS}\n{APP_ABOUT}");
+
+    #[cfg(feature = "service")]
+    let about = format!("{about}{SERVICE_EXAMPLES}");
 
     let args = args.about(about);
 

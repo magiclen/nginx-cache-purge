@@ -50,8 +50,11 @@ fn purge<P: AsRef<Path>>(
     levels: &[usize],
     key: &str,
     exclude_keys: &[&str],
+    options: PurgeOptions,
 ) -> anyhow::Result<AppResult> {
-    if key.contains('*') {
+    options.validate_key(key)?;
+
+    if options.scan || key.contains('*') {
         functions::remove_caches_via_wildcard(cache_path, levels, key, exclude_keys)
     } else {
         functions::remove_one_cache(cache_path, levels, key, exclude_keys)
@@ -68,6 +71,7 @@ fn main() -> anyhow::Result<AppResult> {
             key,
             exclude_keys,
             dry_run,
+            options,
         } => {
             functions::set_dry_run(*dry_run);
 
@@ -78,19 +82,27 @@ fn main() -> anyhow::Result<AppResult> {
                 &levels,
                 key,
                 &exclude_keys.iter().map(|s| s.as_str()).collect::<Vec<&str>>(),
+                *options,
             )
         },
         #[cfg(feature = "service")]
         CLICommands::Start {
             socket_file_path,
             zones,
+            max_concurrent_purges,
             dry_run,
+            options,
         } => {
             functions::set_dry_run(*dry_run);
 
             let zones = parse_zones(zones)?;
 
-            tokio::runtime::Runtime::new()?.block_on(server_main(socket_file_path.as_path(), zones))
+            tokio::runtime::Runtime::new()?.block_on(server_main(
+                socket_file_path.as_path(),
+                zones,
+                *options,
+                *max_concurrent_purges,
+            ))
         },
     }
 }

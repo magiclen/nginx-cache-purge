@@ -66,6 +66,30 @@ A `*` in a key matches any sequence of characters. A key without a trailing `*` 
 | `*/help*` | every key which contains `/help` |
 | `*` | every key |
 
+### Disabling Wildcard Purges
+
+Both `purge` and `start` accept `--no-wildcard`. It rejects any purge key containing `*`, including during a dry run. Excluded keys may still contain wildcards. Without this option, wildcard purges work as before.
+
+```bash
+nginx-cache-purge purge /tmp/cache 1:2 'https/example.org/a' --no-wildcard
+nginx-cache-purge start --zone my_cache /tmp/cache 1:2 --no-wildcard
+```
+
+A rejected CLI purge returns exit status **1**. The service returns HTTP **400**, after applying the request headers and `remove_first`. A request cannot override this server option.
+
+### Vary Variants and Scanning
+
+Nginx may keep several cache files for one key when the upstream response uses `Vary`, such as `Vary: Accept-Language`. These files contain the same key but have different file names.
+
+By default, a purge key without `*` only removes the main file at `MD5(key)`. Use `--scan` to find and remove all files with that exact key, including its `Vary` variants:
+
+```bash
+nginx-cache-purge purge /tmp/cache 1:2 'https/example.org/a' --scan
+nginx-cache-purge start --zone my_cache /tmp/cache 1:2 --scan --no-wildcard
+```
+
+Scanning visits the cache files, so its cost grows with the size of the cache directory. It still respects excluded keys and `--dry-run`. Exact excluded keys protect all their variants during a scan or wildcard purge. `--scan` does not change how wildcard keys work, and it does not allow them when `--no-wildcard` is set.
+
 ### Levels
 
 The `levels` argument has to be the same as the one set by `proxy_cache_path` or `fastcgi_cache_path`. Since `levels` is optional for Nginx, it may be empty here as well, which means every cache file sits directly in the cache directory.
@@ -95,6 +119,10 @@ RestartSec=3s
 [Install]
 WantedBy=multi-user.target
 ```
+
+Use `--max-concurrent-purges N` to limit how many purges run at once. Other requests wait without starting a purge worker. For example, add `--max-concurrent-purges 1` to `ExecStart` to run one purge at a time. Without this option, the service adds no limit of its own.
+
+The service refuses to replace a socket used by another active server and recovers a stale socket left by a stopped process. On `SIGINT` or `SIGTERM`, it stops accepting connections, waits for current requests to finish their responses, and removes its socket.
 
 Each `--zone` takes three values: the name that purge requests refer to, the `path` and the `levels` set by `proxy_cache_path` or `fastcgi_cache_path`. It can be used more than once.
 

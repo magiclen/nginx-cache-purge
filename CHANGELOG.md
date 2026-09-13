@@ -1,6 +1,25 @@
 Changelog
 ====================
 
+## Unreleased
+
+### Added
+
+* Both commands accept `--no-wildcard` to reject purge keys containing `*`. Wildcard purges remain enabled by default. Rejected requests return HTTP **400**, and the CLI returns exit status **1**. The option also applies to dry runs, but does not restrict excluded keys. ([#9](https://github.com/magiclen/nginx-cache-purge/issues/9))
+* Both commands accept `--scan` to find all files with an exact cache key, including Nginx `Vary` variants. Without it, exact purges keep using the direct file path.
+* The service accepts `--max-concurrent-purges N` to limit the number of purges running at once. Other requests wait; no limit is added by default.
+
+### Fixed
+
+* Exact excluded keys now protect `Vary` variants as well as the main cache file during wildcard purges and scans.
+* Starting a second server no longer removes an active server's socket. Stale sockets can still be recovered, and cleanup checks that the socket belongs to this server.
+* Shutdown now waits for active HTTP requests to finish sending their responses, and cleans up the socket even when serving fails.
+* Builds without the `service` feature no longer show service command examples in their help.
+
+### Changed
+
+* Full purges now pass file paths through a bounded queue instead of collecting every path before starting. Large subdirectories are handed to separate workers.
+
 ## 0.5.0
 
 ### Fixed

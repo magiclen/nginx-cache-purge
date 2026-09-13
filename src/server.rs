@@ -1,12 +1,13 @@
 use std::{
     collections::HashMap,
-    fs::Permissions,
+    fs::{Metadata, Permissions},
     io,
     io::IsTerminal,
-    os::unix::fs::{FileTypeExt, PermissionsExt},
+    os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt},
     path::{Path, PathBuf},
     str,
     sync::Arc,
+    time::Duration,
 };
 
 use anyhow::{Context as AnyhowContext, anyhow};
@@ -17,7 +18,12 @@ use axum::{
     response::IntoResponse,
     routing::any,
 };
-use tokio::{fs, net::UnixListener};
+use tokio::{
+    fs,
+    net::{UnixListener, UnixStream},
+    sync::Semaphore,
+    task::JoinError,
+};
 use tower_http::{
     set_header::SetResponseHeaderLayer,
     trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer},
@@ -25,7 +31,7 @@ use tower_http::{
 use tracing::Level;
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
-use crate::{AppResult, functions::parse_levels, purge, uds_serve::serve};
+use crate::{AppResult, cli::PurgeOptions, functions::parse_levels, purge, uds_serve::serve};
 
 const HEADER_ZONE: &str = "x-cache-zone";
 const HEADER_CACHE_PATH: &str = "x-cache-path";
@@ -41,6 +47,32 @@ pub struct Zone {
 }
 
 pub type Zones = HashMap<String, Zone>;
+
+struct AppState {
+    zones:   Zones,
+    options: PurgeOptions,
+    permits: Option<Arc<Semaphore>>,
+}
+
+impl AppState {
+    async fn run_purge<F>(&self, task: F) -> Result<anyhow::Result<AppResult>, JoinError>
+    where
+        F: FnOnce() -> anyhow::Result<AppResult> + Send + 'static, {
+        let permit = match &self.permits {
+            Some(permits) => Some(
+                permits.clone().acquire_owned().await.expect("The purge semaphore is never closed"),
+            ),
+            None => None,
+        };
+
+        tokio::task::spawn_blocking(move || {
+            // The permit must stay with the work even if the client disconnects.
+            let _permit = permit;
+            task()
+        })
+        .await
+    }
+}
 
 /// Turn the flat `NAME PATH LEVELS` triples coming from the CLI into a zone table.
 pub fn parse_zones(zones: &[String]) -> anyhow::Result<Zones> {
@@ -188,7 +220,7 @@ fn resolve_target(zones: &Zones, args: &Args) -> anyhow::Result<(PathBuf, Vec<us
 }
 
 async fn index_handler(
-    State(zones): State<Arc<Zones>>,
+    State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     RawQuery(query): RawQuery,
 ) -> impl IntoResponse {
@@ -198,7 +230,7 @@ async fn index_handler(
         return (StatusCode::BAD_REQUEST, format!("{error:#}"));
     }
 
-    let (cache_path, levels) = match resolve_target(&zones, &args) {
+    let (cache_path, levels) = match resolve_target(&state.zones, &args) {
         Ok(target) => target,
         Err(error) => return (StatusCode::BAD_REQUEST, format!("{error:#}")),
     };
@@ -213,14 +245,20 @@ async fn index_handler(
         key = stripped.to_string();
     }
 
+    let options = state.options;
+    if let Err(error) = options.validate_key(&key) {
+        return (StatusCode::BAD_REQUEST, format!("{error:#}"));
+    }
+
     let exclude_keys = args.exclude_keys;
 
-    let result = tokio::task::spawn_blocking(move || {
-        let exclude_keys: Vec<&str> = exclude_keys.iter().map(|s| s.as_str()).collect();
+    let result = state
+        .run_purge(move || {
+            let exclude_keys: Vec<&str> = exclude_keys.iter().map(|s| s.as_str()).collect();
 
-        purge(cache_path, levels.as_slice(), key.as_str(), &exclude_keys)
-    })
-    .await;
+            purge(cache_path, levels.as_slice(), key.as_str(), &exclude_keys, options)
+        })
+        .await;
 
     match result {
         Ok(Ok(AppResult::Ok)) => (StatusCode::OK, "Ok.".to_string()),
@@ -239,7 +277,7 @@ async fn index_handler(
     }
 }
 
-fn create_app(zones: Zones) -> Router {
+fn create_app(zones: Zones, options: PurgeOptions, max_concurrent_purges: Option<usize>) -> Router {
     Router::new()
         .route("/", any(index_handler))
         // `proxy_pass` without a URI part keeps the URI of the original request, so a purge request may arrive at any path
@@ -254,10 +292,17 @@ fn create_app(zones: Zones) -> Router {
                 .on_request(DefaultOnRequest::new().level(Level::INFO))
                 .on_response(DefaultOnResponse::new().level(Level::INFO)),
         )
-        .with_state(Arc::new(zones))
+        .with_state(Arc::new(AppState {
+            zones, options, permits: max_concurrent_purges.map(|count| Arc::new(Semaphore::new(count))),
+        }))
 }
 
-pub async fn server_main(socket_file_path: &Path, zones: Zones) -> anyhow::Result<AppResult> {
+pub async fn server_main(
+    socket_file_path: &Path,
+    zones: Zones,
+    options: PurgeOptions,
+    max_concurrent_purges: Option<usize>,
+) -> anyhow::Result<AppResult> {
     let mut ansi_color = io::stdout().is_terminal();
 
     if ansi_color && enable_ansi_support::enable_ansi_support().is_err() {
@@ -295,51 +340,72 @@ pub async fn server_main(socket_file_path: &Path, zones: Zones) -> anyhow::Resul
         }
     }
 
-    let app = create_app(zones);
+    let app = create_app(zones, options, max_concurrent_purges);
+    let (uds, identity) =
+        bind_socket(socket_file_path).await.with_context(|| anyhow!("{socket_file_path:?}"))?;
 
-    let uds = {
-        match fs::metadata(socket_file_path).await {
-            Ok(metadata) => {
-                if metadata.file_type().is_socket() {
-                    fs::remove_file(socket_file_path)
-                        .await
-                        .with_context(|| anyhow!("{socket_file_path:?}"))?;
-                } else {
-                    return Err(anyhow!("{socket_file_path:?} exists but it is not a socket file"));
-                }
-            },
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                // do nothing
-            },
-            Err(error) => {
-                return Err(error).with_context(|| anyhow!("{socket_file_path:?}"));
-            },
-        }
-
-        let uds = UnixListener::bind(socket_file_path)
-            .with_context(|| anyhow!("{socket_file_path:?}"))?;
-
-        // between the binding and this call the mode comes from the umask, which usually denies the write permission a connection needs
+    let result = async {
         fs::set_permissions(socket_file_path, Permissions::from_mode(0o660))
             .await
             .with_context(|| anyhow!("{socket_file_path:?}"))?;
 
-        uds
-    };
-
-    tracing::info!("listening on {socket_file_path:?}");
-    serve(uds, app).await?;
+        tracing::info!("listening on {socket_file_path:?}");
+        serve(uds, app).await
+    }
+    .await;
 
     tracing::info!("shutting down");
-
-    // dropping the listener does not remove the socket file
-    match fs::remove_file(socket_file_path).await {
-        Ok(_) => (),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => (),
-        Err(error) => tracing::warn!("cannot remove {socket_file_path:?}: {error}"),
+    if let Err(error) = remove_socket(socket_file_path, &identity).await {
+        tracing::warn!("cannot remove {socket_file_path:?}: {error}");
     }
 
+    result?;
     Ok(AppResult::Ok)
+}
+
+async fn bind_socket(path: &Path) -> io::Result<(UnixListener, Metadata)> {
+    let listener = match UnixListener::bind(path) {
+        Ok(listener) => listener,
+        Err(error) if error.kind() == io::ErrorKind::AddrInUse => {
+            let identity = fs::symlink_metadata(path).await?;
+            if !identity.file_type().is_socket() {
+                return Err(error);
+            }
+
+            match tokio::time::timeout(Duration::from_secs(1), UnixStream::connect(path)).await {
+                Ok(Err(probe_error)) if probe_error.kind() == io::ErrorKind::ConnectionRefused => {
+                    remove_socket(path, &identity).await?;
+                },
+                // A live listener or an uncertain result must leave the existing socket alone.
+                _ => return Err(error),
+            }
+
+            UnixListener::bind(path)?
+        },
+        Err(error) => return Err(error),
+    };
+
+    let identity = fs::symlink_metadata(path).await?;
+    Ok((listener, identity))
+}
+
+async fn remove_socket(path: &Path, identity: &Metadata) -> io::Result<()> {
+    let current = match fs::symlink_metadata(path).await {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+
+    // Another process may have replaced the path since this server bound it.
+    if current.dev() == identity.dev() && current.ino() == identity.ino() {
+        match fs::remove_file(path).await {
+            Ok(()) => (),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => (),
+            Err(error) => return Err(error),
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -470,5 +536,105 @@ mod tests {
         };
 
         assert!(resolve_target(&zones, &args).is_err());
+    }
+    #[test]
+    fn wildcard_policy_uses_the_final_request_key() {
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let dir = tempfile::tempdir().unwrap();
+            let state = Arc::new(AppState {
+                zones:   parse_zones(&[
+                    "cache".into(),
+                    dir.path().to_str().unwrap().into(),
+                    "".into(),
+                ])
+                .unwrap(),
+                options: PurgeOptions {
+                    no_wildcard: true, scan: true
+                },
+                permits: None,
+            });
+            let mut headers = HeaderMap::new();
+            headers.insert(HEADER_ZONE, HeaderValue::from_static("cache"));
+            headers.insert(HEADER_KEY, HeaderValue::from_static("*"));
+            let response = index_handler(
+                State(state.clone()),
+                headers.clone(),
+                RawQuery(Some("key=exact".into())),
+            )
+            .await
+            .into_response();
+            assert_eq!(StatusCode::BAD_REQUEST, response.status());
+
+            headers.insert(HEADER_KEY, HeaderValue::from_static("/purge/exact"));
+            headers.insert(HEADER_REMOVE_FIRST, HeaderValue::from_static("/purge/"));
+            let response = index_handler(State(state), headers, RawQuery(Some("key=*".into())))
+                .await
+                .into_response();
+            assert_eq!(StatusCode::ACCEPTED, response.status());
+        });
+    }
+
+    #[test]
+    fn sockets_keep_the_active_server_and_recover_stale_paths() {
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("service.sock");
+            let (listener, identity) = bind_socket(&path).await.unwrap();
+            assert_eq!(io::ErrorKind::AddrInUse, bind_socket(&path).await.unwrap_err().kind());
+            assert_eq!(identity.ino(), fs::symlink_metadata(&path).await.unwrap().ino());
+            let client = UnixStream::connect(&path).await.unwrap();
+            drop(client);
+            drop(listener);
+
+            let (listener, identity) = bind_socket(&path).await.unwrap();
+            fs::remove_file(&path).await.unwrap();
+            let (replacement, replacement_identity) = bind_socket(&path).await.unwrap();
+            remove_socket(&path, &identity).await.unwrap();
+            assert!(path.exists());
+            drop(listener);
+            drop(replacement);
+            remove_socket(&path, &replacement_identity).await.unwrap();
+            assert!(!path.exists());
+        });
+    }
+
+    #[test]
+    fn purge_limit_stays_with_running_work() {
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let state = Arc::new(AppState {
+                zones:   Zones::new(),
+                options: PurgeOptions::default(),
+                permits: Some(Arc::new(Semaphore::new(1))),
+            });
+            let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+            let (finish_tx, finish_rx) = std::sync::mpsc::channel();
+            let first_state = state.clone();
+            let first = tokio::spawn(async move {
+                first_state
+                    .run_purge(move || {
+                        started_tx.send(()).unwrap();
+                        finish_rx.recv().unwrap();
+                        Ok(AppResult::Ok)
+                    })
+                    .await
+            });
+            started_rx.await.unwrap();
+            first.abort();
+            assert!(first.await.unwrap_err().is_cancelled());
+
+            let second = state.run_purge(|| Ok(AppResult::Ok));
+            tokio::pin!(second);
+            assert!(tokio::time::timeout(Duration::from_millis(20), &mut second).await.is_err());
+            finish_tx.send(()).unwrap();
+            assert_eq!(
+                AppResult::Ok,
+                tokio::time::timeout(Duration::from_secs(5), second)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .unwrap()
+            );
+            assert_eq!(1, state.permits.as_ref().unwrap().available_permits());
+        });
     }
 }
